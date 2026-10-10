@@ -41,6 +41,7 @@ K9S_VERSION="0.32.7"
 KUBELETCTL_VERSION="1.13"
 KIND_VERSION="0.31.0"
 OC_VERSION="4.20"
+OPENCODE_VERSION="1.18.35"
 
 # Default values
 OUTPUT_DIR="/var/lib/vmm/images/rootfs"
@@ -384,6 +385,17 @@ install_binary_tools() {
     chmod +x "$bin_dir/oc"
     rm -rf "$oc_tmp"
 
+    # opencode (AI coding agent) — the baseline build runs on CPUs without AVX2
+    log_info "  Installing opencode ${OPENCODE_VERSION}..."
+    local opencode_tmp
+    opencode_tmp=$(mktemp -d)
+    curl --retry 3 --retry-delay 5 -fSL \
+        "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-x64-baseline.tar.gz" \
+        | tar -xz -C "$opencode_tmp"
+    mv "$opencode_tmp/opencode" "$bin_dir/opencode"
+    chmod +x "$bin_dir/opencode"
+    rm -rf "$opencode_tmp"
+
     log_info "Binary tools installed successfully"
 }
 
@@ -609,6 +621,7 @@ log_info "    nmap, tcpdump, socat, dnsutils, traceroute, whois"
 log_info "    amicontained ${AMICONTAINED_VERSION}, kdigger ${KDIGGER_VERSION}, kubeletctl ${KUBELETCTL_VERSION}"
 log_info "    rbac-tool ${RBAC_TOOL_VERSION}, k9s ${K9S_VERSION}, jwt-cli ${JWT_CLI_VERSION}"
 log_info "    kind ${KIND_VERSION}, starship prompt, kubectx/kubens, oc ${OC_VERSION}"
+log_info "    opencode ${OPENCODE_VERSION}"
 echo ""
 echo "To use this rootfs with vmm:"
 echo "  gunzip -c $OUTPUT_DIR/${NAME}.gz > /var/lib/vmm/images/rootfs/security-rootfs.ext4"
