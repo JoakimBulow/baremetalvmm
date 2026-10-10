@@ -235,13 +235,19 @@ func clusterCreateCmd() *cobra.Command {
 				}
 			}
 
-			// Set up admin workstation if requested
+			// Set up admin workstation if requested, with its own key for SSH to the nodes
+			var adminPubKey string
 			if adminWorkstation {
 				secImage := imgMgr.FindSecurityRootfs()
 				if secImage == "" {
 					return fmt.Errorf("--admin-workstation requires a security-* rootfs image (none found, run 'vmm image pull' first)")
 				}
 				cl.AdminVM = fmt.Sprintf("%s-admin", name)
+				key, err := sshkey.GenerateClusterKeyPair(paths.SSH, name)
+				if err != nil {
+					return fmt.Errorf("failed to create cluster admin SSH key: %w", err)
+				}
+				adminPubKey = key
 				fmt.Printf("Admin workstation enabled: %s (image: %s)\n", cl.AdminVM, secImage)
 			}
 
@@ -281,6 +287,9 @@ func clusterCreateCmd() *cobra.Command {
 				newVM.MacAddress = newVM.GenerateMacAddress()
 				newVM.TapDevice = network.GenerateTapName(newVM.ID)
 				newVM.SSHPublicKey = sshPubKey
+				if vmName != cl.AdminVM {
+					newVM.SSHPublicKey = sshkey.JoinKeys(sshPubKey, adminPubKey)
+				}
 				newVM.SocketPath = fmt.Sprintf("%s/%s.sock", paths.Sockets, vmName)
 
 				if err := newVM.Save(paths.VMs); err != nil {
@@ -355,6 +364,12 @@ func clusterCreateCmd() *cobra.Command {
 					fmt.Printf("Warning: failed to copy kubeconfig to admin workstation: %v\n", err)
 				} else {
 					fmt.Println("Kubeconfig copied to admin workstation at /root/.kube/config")
+				}
+				fmt.Printf("Installing node SSH access on admin workstation %s...\n", cl.AdminVM)
+				if err := cluster.InstallAdminKey(adminIP, sshPrivateKeyPath, sshkey.ClusterKeyPath(paths.SSH, name), name, nodeInfos); err != nil {
+					fmt.Printf("Warning: failed to install node SSH access on admin workstation: %v\n", err)
+				} else {
+					fmt.Println("Admin workstation can SSH to the cluster nodes as root (e.g. ssh " + cl.ControlPlaneVM + ")")
 				}
 			}
 
@@ -571,6 +586,10 @@ func clusterDeleteCmd() *cobra.Command {
 			// Remove kubeconfig context
 			if err := cluster.RemoveKubeconfigContext(name); err != nil {
 				fmt.Printf("Warning: failed to remove kubeconfig context: %v\n", err)
+			}
+
+			if err := sshkey.RemoveClusterKeyPair(paths.SSH, name); err != nil {
+				fmt.Printf("Warning: failed to remove cluster admin SSH key: %v\n", err)
 			}
 
 			// Delete cluster config

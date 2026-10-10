@@ -100,16 +100,24 @@ vmm ssh mycluster-admin
 
 # kubectl is pre-configured
 root@mycluster-admin:~# kubectl get nodes
+
+# and so is SSH to the cluster nodes, by VM name or IP
+root@mycluster-admin:~# ssh mycluster-worker-1
 ```
 
 The admin workstation VM:
 - Uses the latest `security-*` rootfs image (must be available locally; run `sudo vmm image pull` first)
 - Has fixed resources: 2 vCPUs, 4 GB RAM, 20 GB disk, default kernel
 - Gets the cluster kubeconfig written to `/root/.kube/config` with the server URL pointing to the control plane's internal IP
+- Can SSH as root to every cluster node, by VM name or IP, using an Ed25519 key generated for this cluster (see below)
 - Is named `{cluster}-admin` and is managed as part of the cluster (deleted when the cluster is deleted)
 - Is **not** a Kubernetes node — it's excluded from kubeadm provisioning
 
 The admin workstation is also available as a checkbox in the web UI cluster creation form (requires a `security-*` image to be present).
+
+### Node SSH access
+
+When a cluster has an admin workstation, vmm generates a key pair just for that cluster (`/var/lib/vmm/ssh/clusters/{cluster}_ed25519`). The public key is added to the cluster nodes' authorized keys, so it's re-injected every time a node starts. The private key is copied to the workstation at `/root/.ssh/vmm_cluster_ed25519`, and `/etc/ssh/ssh_config.d/vmm-cluster.conf` maps each node name and IP to it. The key only works on that cluster's nodes, not on other VMs on the host, and it's deleted along with the cluster.
 
 ## Deleting a Cluster
 

@@ -234,6 +234,7 @@ func (s *Server) handleClusterCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var adminPubKey string
 	if adminWorkstation {
 		secImage := imgMgr.FindSecurityRootfs()
 		if secImage == "" {
@@ -244,6 +245,15 @@ func (s *Server) handleClusterCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		cl.AdminVM = fmt.Sprintf("%s-admin", name)
+		key, err := sshkey.GenerateClusterKeyPair(paths.SSH, name)
+		if err != nil {
+			s.renderPage(w, r, "cluster_create.html", "clusters", map[string]interface{}{
+				"Flash":     "Failed to create cluster admin SSH key: " + err.Error(),
+				"FlashType": "error",
+			})
+			return
+		}
+		adminPubKey = key
 	}
 
 	if err := cl.Save(paths.Clusters); err != nil {
@@ -277,6 +287,9 @@ func (s *Server) handleClusterCreate(w http.ResponseWriter, r *http.Request) {
 		newVM.MacAddress = newVM.GenerateMacAddress()
 		newVM.TapDevice = network.GenerateTapName(newVM.ID)
 		newVM.SSHPublicKey = sshKey
+		if vmName != cl.AdminVM {
+			newVM.SSHPublicKey = sshkey.JoinKeys(sshKey, adminPubKey)
+		}
 		newVM.SocketPath = fmt.Sprintf("%s/%s.sock", paths.Sockets, vmName)
 
 		if err := newVM.Save(paths.VMs); err != nil {
@@ -401,6 +414,12 @@ func (s *Server) provisionClusterInBackground(clusterName, source string) {
 		} else {
 			log.Printf("cluster %s: kubeconfig copied to admin workstation", clusterName)
 		}
+		log.Printf("cluster %s: installing node SSH access on admin workstation %s...", clusterName, cl.AdminVM)
+		if err := cluster.InstallAdminKey(adminIP, sshKeyPath, sshkey.ClusterKeyPath(paths.SSH, clusterName), clusterName, nodeInfos); err != nil {
+			log.Printf("cluster %s: warning: failed to install node SSH access on admin workstation: %v", clusterName, err)
+		} else {
+			log.Printf("cluster %s: admin workstation can SSH to the cluster nodes", clusterName)
+		}
 	}
 
 	cl.State = cluster.StateRunning
@@ -486,6 +505,9 @@ func (s *Server) deleteCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := sshkey.RemoveClusterKeyPair(paths.SSH, name); err != nil {
+		log.Printf("cluster %s: failed to remove admin SSH key: %v", name, err)
+	}
 	cluster.Delete(paths.Clusters, name)
 	s.sseBroker.Record(kindCluster, name, stateDeleted, source, "")
 
@@ -662,6 +684,7 @@ func (s *Server) handleAPIClusterCreate(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	var adminPubKey string
 	if req.AdminWorkstation {
 		secImage := imgMgr.FindSecurityRootfs()
 		if secImage == "" {
@@ -669,6 +692,12 @@ func (s *Server) handleAPIClusterCreate(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		cl.AdminVM = fmt.Sprintf("%s-admin", req.Name)
+		key, err := sshkey.GenerateClusterKeyPair(paths.SSH, req.Name)
+		if err != nil {
+			jsonError(w, "Failed to create cluster admin SSH key: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		adminPubKey = key
 	}
 
 	if err := cl.Save(paths.Clusters); err != nil {
@@ -697,6 +726,9 @@ func (s *Server) handleAPIClusterCreate(w http.ResponseWriter, r *http.Request) 
 		newVM.MacAddress = newVM.GenerateMacAddress()
 		newVM.TapDevice = network.GenerateTapName(newVM.ID)
 		newVM.SSHPublicKey = req.SSHKey
+		if vmName != cl.AdminVM {
+			newVM.SSHPublicKey = sshkey.JoinKeys(req.SSHKey, adminPubKey)
+		}
 		newVM.SocketPath = fmt.Sprintf("%s/%s.sock", paths.Sockets, vmName)
 
 		if err := newVM.Save(paths.VMs); err != nil {
@@ -773,6 +805,9 @@ func (s *Server) handleAPIClusterDelete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if err := sshkey.RemoveClusterKeyPair(paths.SSH, name); err != nil {
+		log.Printf("cluster %s: failed to remove admin SSH key: %v", name, err)
+	}
 	cluster.Delete(paths.Clusters, name)
 	s.sseBroker.Record(kindCluster, name, stateDeleted, source, "")
 	jsonResponse(w, map[string]string{"status": "deleted"})

@@ -73,7 +73,8 @@ kubectl --context vmm-myocp get securitycontextconstraints
 ```
 
 If you created the cluster with `--admin-workstation`, the kubeconfig is also copied to
-`/root/.kube/config` on the `{name}-admin` VM.
+`/root/.kube/config` on the `{name}-admin` VM, and the workstation can `ssh {name}-control-plane`
+as root (see [Node SSH access](kubernetes.md#node-ssh-access)).
 
 To re-merge the kubeconfig later:
 

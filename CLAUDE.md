@@ -233,3 +233,5 @@ Both `vmm ssh` and config loading detect `SUDO_USER` to use the original user's 
 ## SSH Key Management
 
 VMM automatically generates and manages an Ed25519 key pair (`/var/lib/vmm/ssh/vmm_ed25519`). This managed key is always injected into VMs via `sshkey.BuildAuthorizedKeys()`, so `--ssh-key` is optional for both VM and cluster creation. User-provided keys are added alongside the managed key. The managed key is also used for cluster provisioning (kubeadm over SSH) when no user key is specified.
+
+Clusters with an admin workstation also get their own key pair (`/var/lib/vmm/ssh/clusters/<cluster>_ed25519`, `sshkey.GenerateClusterKeyPair`). Its public key is added to the node VMs' `SSHPublicKey`, so it's re-injected on every start. `cluster.InstallAdminKey` copies the private key to the workstation with an `/etc/ssh/ssh_config.d/vmm-cluster.conf` for the nodes. Never give the workstation the managed key: that key logs in to every VM on the host. Cluster delete removes the pair (CLI and both web paths).
