@@ -42,6 +42,7 @@ KUBELETCTL_VERSION="1.13"
 KIND_VERSION="0.31.0"
 OC_VERSION="4.20"
 OPENCODE_VERSION="1.18.35"
+ETCD_VERSION="3.7.2"
 
 # Default values
 OUTPUT_DIR="/var/lib/vmm/images/rootfs"
@@ -396,6 +397,17 @@ install_binary_tools() {
     chmod +x "$bin_dir/opencode"
     rm -rf "$opencode_tmp"
 
+    # etcdctl (etcd client, for poking at cluster datastores)
+    log_info "  Installing etcdctl ${ETCD_VERSION}..."
+    local etcd_tmp
+    etcd_tmp=$(mktemp -d)
+    curl --retry 3 --retry-delay 5 -fSL \
+        "https://github.com/etcd-io/etcd/releases/download/v${ETCD_VERSION}/etcd-v${ETCD_VERSION}-linux-amd64.tar.gz" \
+        | tar -xz -C "$etcd_tmp" --strip-components=1 "etcd-v${ETCD_VERSION}-linux-amd64/etcdctl"
+    mv "$etcd_tmp/etcdctl" "$bin_dir/etcdctl"
+    chmod +x "$bin_dir/etcdctl"
+    rm -rf "$etcd_tmp"
+
     log_info "Binary tools installed successfully"
 }
 
@@ -621,7 +633,7 @@ log_info "    nmap, tcpdump, socat, dnsutils, traceroute, whois"
 log_info "    amicontained ${AMICONTAINED_VERSION}, kdigger ${KDIGGER_VERSION}, kubeletctl ${KUBELETCTL_VERSION}"
 log_info "    rbac-tool ${RBAC_TOOL_VERSION}, k9s ${K9S_VERSION}, jwt-cli ${JWT_CLI_VERSION}"
 log_info "    kind ${KIND_VERSION}, starship prompt, kubectx/kubens, oc ${OC_VERSION}"
-log_info "    opencode ${OPENCODE_VERSION}"
+log_info "    opencode ${OPENCODE_VERSION}, etcdctl ${ETCD_VERSION}"
 echo ""
 echo "To use this rootfs with vmm:"
 echo "  gunzip -c $OUTPUT_DIR/${NAME}.gz > /var/lib/vmm/images/rootfs/security-rootfs.ext4"
