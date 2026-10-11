@@ -8,7 +8,7 @@ VMM (Bare Metal MicroVM Manager) is a Go-based CLI tool for managing Firecracker
 
 ## Tech Stack
 
-- **Language**: Go 1.25+
+- **Language**: Go 1.27+
 - **VMM Engine**: Firecracker v1.16.0 (via firecracker-go-sdk)
 - **CLI Framework**: Cobra (github.com/spf13/cobra)
 - **Web UI**: Chi router, html/template, HTMX, hand-written CSS in the Katagami "Caret Ledger" design language (`web/static/style.css`, self-hosted Sora + Azeret Mono fonts)
@@ -139,7 +139,7 @@ All profiles start from Firecracker's minimal CI config and layer options on top
 ### CI Checks (`.github/workflows/ci.yml`)
 
 Runs on push to `main` and all PRs. Three parallel jobs:
-- **Test** — `go mod tidy` check, build, `go test -race -shuffle=on` across Go 1.25 + stable
+- **Test** — `go mod tidy` check, build, `go test -race -shuffle=on` across Go 1.27 + stable
 - **Lint** — `go vet` + `golangci-lint`
 - **Vulnerability Check** — `govulncheck` for known CVEs in dependency call graph
 

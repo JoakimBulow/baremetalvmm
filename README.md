@@ -16,7 +16,7 @@ Pretty much all of the coding has been done with [Claude code](https://github.co
 - An x86_64 (amd64) host. Pre-built binaries, kernels and rootfs images are published for amd64 only
 - KVM support (`/dev/kvm` must be accessible)
 - Root access (for networking setup)
-- Go 1.25+ (only if building from source)
+- Go 1.27+ (only if building from source)
 
 ## Quick Start
 
