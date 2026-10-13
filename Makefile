@@ -24,12 +24,16 @@ build-quick:
 	go build -o vmm ./cmd/vmm/
 	go build -o vmm-web ./cmd/vmm-web/
 
-# Install to /usr/local/bin (requires sudo)
+# Install to /usr/local/bin (requires sudo). Copies to a temp name and
+# renames so a running vmm-web keeps its old inode instead of failing
+# with "Text file busy" (same approach as scripts/install.sh).
 install: build build-web
-	sudo cp vmm /usr/local/bin/vmm
-	sudo chmod +x /usr/local/bin/vmm
-	sudo cp vmm-web /usr/local/bin/vmm-web
-	sudo chmod +x /usr/local/bin/vmm-web
+	sudo cp vmm /usr/local/bin/vmm.new
+	sudo chmod 755 /usr/local/bin/vmm.new
+	sudo mv -f /usr/local/bin/vmm.new /usr/local/bin/vmm
+	sudo cp vmm-web /usr/local/bin/vmm-web.new
+	sudo chmod 755 /usr/local/bin/vmm-web.new
+	sudo mv -f /usr/local/bin/vmm-web.new /usr/local/bin/vmm-web
 
 # Clean build artifacts
 clean:
