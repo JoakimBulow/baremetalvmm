@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-VMM (Bare Metal MicroVM Manager) is a Go-based CLI tool for managing Firecracker microVMs on Ubuntu 24.04. It's designed for development environments supporting 10-50 concurrent VMs. It includes an optional web UI (`vmm-web`) for browser-based management.
+VMM (Bare Metal MicroVM Manager) is a Go-based CLI tool for managing Firecracker microVMs on Ubuntu 24.04 (also tested on Fedora 44). It's designed for development environments supporting 10-50 concurrent VMs. It includes an optional web UI (`vmm-web`) for browser-based management.
 
 **Status**: Core functionality complete and tested. See PLAN.md for implementation status.
 
@@ -118,6 +118,7 @@ Create flag defaults can be set in `~/.config/vmm/config.json` under `vm_default
 
 ### Modifying network behavior
 - Edit `internal/network/network.go`
+- On hosts running firewalld (Fedora/RHEL), `EnsureBridge()` puts the bridge in the `trusted` zone (runtime + permanent). firewalld's nftables table rejects inter-zone forwarding independently of our iptables rules, so without this VMs lose egress whenever the host NIC isn't in the default zone
 - Key functions: `EnsureBridge()`, `CreateTap()`, `AllocateIP()`, `AddPortForward()`
 - Port forwards go through `internal/portforward` (CLI and web): `Apply` on start/restore, `Clear` on stop/delete, `Add`/`Remove` for live changes, `List` for status. Don't call `AddPortForward`/`RemovePortForward` directly from lifecycle code. iptables rules are unit-tested against a fake runner (`Manager.run`) in `internal/network/portforward_test.go`
 

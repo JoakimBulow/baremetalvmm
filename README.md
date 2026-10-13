@@ -12,7 +12,8 @@ Pretty much all of the coding has been done with [Claude code](https://github.co
 
 ## Requirements
 
-- Ubuntu 24.04 (or compatible Linux distribution). All testing has been done on Ubuntu 24.04, so it's likely only to work with that distro.
+- Ubuntu 24.04 or Fedora 44 (both tested). Other systemd-based distributions are likely to work but are untested. On Fedora/RHEL, vmm adds its bridge to firewalld's `trusted` zone so VMs can reach the network
+- Docker or Podman, only for importing container images as VM root filesystems (`vmm image import`)
 - An x86_64 (amd64) host. Pre-built binaries, kernels and rootfs images are published for amd64 only
 - KVM support (`/dev/kvm` must be accessible)
 - Root access (for networking setup)

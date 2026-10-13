@@ -46,16 +46,20 @@ func (m *Manager) ImportDockerImage(dockerImage, imageName string, sizeMB int) e
 	}
 
 	// Step 1: Create a container from the image and export it
-	fmt.Println("  Exporting Docker image...")
-	containerID, err := runCmdOutput("docker", "create", dockerImage)
+	engine, err := containerEngine()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("  Exporting image with %s...\n", engine)
+	containerID, err := runCmdOutput(engine, "create", dockerImage)
 	if err != nil {
 		return fmt.Errorf("failed to create container from image: %w", err)
 	}
 	containerID = strings.TrimSpace(containerID)
-	defer exec.Command("docker", "rm", containerID).Run()
+	defer exec.Command(engine, "rm", containerID).Run()
 
 	// Export and extract in one step
-	exportCmd := exec.Command("docker", "export", containerID)
+	exportCmd := exec.Command(engine, "export", containerID)
 	tarCmd := exec.Command("tar", "-xf", "-", "-C", exportDir)
 	tarCmd.Stdin, _ = exportCmd.StdoutPipe()
 	tarCmd.Stderr = os.Stderr
@@ -344,6 +348,17 @@ func createExt4Image(imagePath, sourceDir string, sizeMB int) error {
 }
 
 // runCmdOutput runs a command and returns its output
+// containerEngine returns the CLI used to export images: docker, or podman
+// (the default on Fedora and RHEL), whose create/export/rm commands match.
+func containerEngine() (string, error) {
+	for _, name := range []string{"docker", "podman"} {
+		if _, err := exec.LookPath(name); err == nil {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("image import needs docker or podman, and neither was found in PATH")
+}
+
 func runCmdOutput(name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	output, err := cmd.Output()

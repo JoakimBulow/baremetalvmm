@@ -1,6 +1,8 @@
 package network
 
 import (
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -116,4 +118,49 @@ func itoa(i int) string {
 		i /= 10
 	}
 	return s
+}
+
+func TestEnsureFirewalldZone(t *testing.T) {
+	tests := []struct {
+		name    string
+		running bool
+		trusted bool
+		want    []string
+	}{
+		{"firewalld not running", false, false, []string{
+			"firewall-cmd --state",
+		}},
+		{"bridge already trusted", true, true, []string{
+			"firewall-cmd --state",
+			"firewall-cmd --zone=trusted --query-interface=vmm-br0",
+		}},
+		{"bridge moved to trusted", true, false, []string{
+			"firewall-cmd --state",
+			"firewall-cmd --zone=trusted --query-interface=vmm-br0",
+			"firewall-cmd --zone=trusted --change-interface=vmm-br0",
+			"firewall-cmd --permanent --zone=trusted --change-interface=vmm-br0",
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls []string
+			m := &Manager{BridgeName: "vmm-br0", run: func(name string, args ...string) error {
+				call := name + " " + strings.Join(args, " ")
+				calls = append(calls, call)
+				switch {
+				case call == "firewall-cmd --state" && !tt.running:
+					return errors.New("not running")
+				case strings.Contains(call, "--query-interface") && !tt.trusted:
+					return errors.New("no")
+				}
+				return nil
+			}}
+			if err := m.ensureFirewalldZone(); err != nil {
+				t.Fatalf("ensureFirewalldZone: %v", err)
+			}
+			if strings.Join(calls, "\n") != strings.Join(tt.want, "\n") {
+				t.Errorf("calls:\n%s\nwant:\n%s", strings.Join(calls, "\n"), strings.Join(tt.want, "\n"))
+			}
+		})
+	}
 }

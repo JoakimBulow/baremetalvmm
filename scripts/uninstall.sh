@@ -162,6 +162,15 @@ else
     echo "  Bridge $BRIDGE_NAME not found"
 fi
 
+# vmm puts the bridge in firewalld's trusted zone (Fedora/RHEL)
+if command -v firewall-cmd &>/dev/null && firewall-cmd --state &>/dev/null; then
+    if firewall-cmd --permanent --zone=trusted --query-interface="$BRIDGE_NAME" &>/dev/null; then
+        firewall-cmd --permanent --zone=trusted --remove-interface="$BRIDGE_NAME" &>/dev/null || true
+        firewall-cmd --zone=trusted --remove-interface="$BRIDGE_NAME" &>/dev/null || true
+        echo -e "  ${GREEN}Removed $BRIDGE_NAME from firewalld's trusted zone${NC}"
+    fi
+fi
+
 # 5. Remove iptables rules
 echo "Removing iptables rules..."
 RULES_REMOVED=0

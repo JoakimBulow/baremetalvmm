@@ -69,7 +69,36 @@ func (m *Manager) EnsureBridge() error {
 		return fmt.Errorf("failed to setup NAT: %w", err)
 	}
 
+	if err := m.ensureFirewalldZone(); err != nil {
+		return fmt.Errorf("failed to add %s to firewalld's trusted zone: %w", m.BridgeName, err)
+	}
+
 	return nil
+}
+
+// ensureFirewalldZone puts the bridge in firewalld's trusted zone when
+// firewalld is running (the default on Fedora and RHEL). firewalld's own
+// nftables table is evaluated separately from the iptables rules above, and
+// it rejects forwarded traffic between zones: an unzoned bridge falls into
+// the default zone, so VMs lose outbound access whenever the host interface
+// is in any other zone. The change is made both at runtime and permanently,
+// so it survives a firewall-cmd --reload. Without firewalld this is a no-op.
+func (m *Manager) ensureFirewalldZone() error {
+	if m.run == nil {
+		if _, err := exec.LookPath("firewall-cmd"); err != nil {
+			return nil
+		}
+	}
+	if err := m.runCmd("firewall-cmd", "--state"); err != nil {
+		return nil // installed but not running
+	}
+	if m.runCmd("firewall-cmd", "--zone=trusted", "--query-interface="+m.BridgeName) == nil {
+		return nil
+	}
+	if err := m.runCmd("firewall-cmd", "--zone=trusted", "--change-interface="+m.BridgeName); err != nil {
+		return err
+	}
+	return m.runCmd("firewall-cmd", "--permanent", "--zone=trusted", "--change-interface="+m.BridgeName)
 }
 
 // CreateTap creates a TAP device for a VM
