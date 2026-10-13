@@ -1,7 +1,9 @@
 package image
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -110,5 +112,36 @@ func TestDescribeRootfs(t *testing.T) {
 				t.Error("description should not be empty")
 			}
 		})
+	}
+}
+
+func TestInstallMountService(t *testing.T) {
+	root := t.TempDir()
+	unit := filepath.Join(root, "etc/systemd/system", mountServiceName)
+	link := filepath.Join(root, "etc/systemd/system/multi-user.target.wants", mountServiceName)
+
+	// Enabling twice must not fail on the existing symlink.
+	for i := 0; i < 2; i++ {
+		if err := installMountService(root, true); err != nil {
+			t.Fatalf("enable: %v", err)
+		}
+	}
+	if target, err := os.Readlink(link); err != nil || target != "/etc/systemd/system/"+mountServiceName {
+		t.Errorf("wants symlink = %q, %v", target, err)
+	}
+	if data, err := os.ReadFile(unit); err != nil || !strings.Contains(string(data), "ExecStart=/bin/mount -a") {
+		t.Errorf("unit not written: %v", err)
+	}
+
+	if err := installMountService(root, false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	for _, p := range []string{unit, link} {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			t.Errorf("%s still present after disable", p)
+		}
+	}
+	if err := installMountService(root, false); err != nil {
+		t.Errorf("disable with nothing installed: %v", err)
 	}
 }

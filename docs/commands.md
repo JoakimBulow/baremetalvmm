@@ -9,6 +9,7 @@
 | `vmm stop <name>` | Stop a running VM (requires root) |
 | `vmm delete <name>` | Delete a VM and its resources |
 | `vmm list` | List all VMs |
+| `vmm set <name> autostart on\|off` | Choose whether the VM starts at boot (via `vmm.service`; new VMs default to on) |
 
 **Note**: VMs must be explicitly started after creation. IP addresses are assigned at start time, not at creation time.
 
@@ -26,6 +27,7 @@ Flags:
   --image string     Name of rootfs image to use (from 'vmm image import')
   --kernel string    Name of kernel to use (from 'vmm kernel import' or 'vmm kernel build')
   --mount string     Mount host directory in VM (format: /host/path:tag[:ro|rw], can be repeated)
+  --no-autostart     Don't start this VM at boot
 ```
 
 Example with all options:
@@ -114,6 +116,8 @@ See [Networking → Port Forwarding](networking.md#port-forwarding) for how forw
 |---------|-------------|
 | `vmm mount list <name>` | List mounts configured for a VM |
 | `vmm mount sync <name> <tag>` | Sync mount image from host directory (VM must be stopped) |
+
+Each mount is a copy of the host directory, taken into an ext4 image when the VM starts, and appears in the guest at `/mnt/<tag>`. Avoid host paths on tmpfs (such as `/tmp` on Fedora): they are emptied at reboot, so the mount is skipped when the VM starts at boot. `vmm create` warns about this.
 
 ## Images
 

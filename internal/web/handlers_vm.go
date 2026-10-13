@@ -14,6 +14,7 @@ import (
 
 	"github.com/raesene/baremetalvmm/internal/firecracker"
 	"github.com/raesene/baremetalvmm/internal/image"
+	"github.com/raesene/baremetalvmm/internal/mount"
 	"github.com/raesene/baremetalvmm/internal/network"
 	"github.com/raesene/baremetalvmm/internal/portforward"
 	"github.com/raesene/baremetalvmm/internal/snapshot"
@@ -307,6 +308,11 @@ func (s *Server) startVM(existingVM *vm.VM) error {
 		return fmt.Errorf("failed to inject DNS config: %w", err)
 	}
 
+	mountDrives, err := mount.NewManager(paths.Mounts).PrepareVM(existingVM, nil)
+	if err != nil {
+		return err
+	}
+
 	netMgr := network.NewManager(s.cfg.BridgeName, s.cfg.Subnet, s.cfg.Gateway, s.cfg.HostInterface)
 	if err := netMgr.EnsureBridge(); err != nil {
 		return fmt.Errorf("failed to setup bridge: %w", err)
@@ -363,17 +369,18 @@ func (s *Server) startVM(existingVM *vm.VM) error {
 	ctx := context.Background()
 	fcClient := firecracker.NewClient()
 	vmCfg := &firecracker.VMConfig{
-		SocketPath: existingVM.SocketPath,
-		KernelPath: existingVM.KernelPath,
-		RootfsPath: existingVM.RootfsPath,
-		CPUs:       existingVM.CPUs,
-		MemoryMB:   existingVM.MemoryMB,
-		TapDevice:  existingVM.TapDevice,
-		MacAddress: existingVM.MacAddress,
-		LogPath:    fmt.Sprintf("%s/%s.log", paths.Logs, existingVM.Name),
-		IPAddress:  existingVM.IPAddress,
-		Gateway:    s.cfg.Gateway,
-		Subnet:     s.cfg.Subnet,
+		SocketPath:  existingVM.SocketPath,
+		KernelPath:  existingVM.KernelPath,
+		RootfsPath:  existingVM.RootfsPath,
+		CPUs:        existingVM.CPUs,
+		MemoryMB:    existingVM.MemoryMB,
+		TapDevice:   existingVM.TapDevice,
+		MacAddress:  existingVM.MacAddress,
+		LogPath:     fmt.Sprintf("%s/%s.log", paths.Logs, existingVM.Name),
+		IPAddress:   existingVM.IPAddress,
+		Gateway:     s.cfg.Gateway,
+		Subnet:      s.cfg.Subnet,
+		MountDrives: mountDrives,
 	}
 
 	machine, err := fcClient.StartVM(ctx, vmCfg)

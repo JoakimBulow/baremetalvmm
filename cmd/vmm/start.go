@@ -80,43 +80,14 @@ func startCmd() *cobra.Command {
 			}
 
 			// Create mount images and configure fstab
-			var mountDrives []firecracker.MountDrive
 			if len(existingVM.Mounts) > 0 {
 				fmt.Println("Creating mount images...")
-				mountMgr := mount.NewManager(paths.Mounts)
-
-				// Create mount images and collect drive configs
-				var mountEntries []image.MountEntry
-				for i := range existingVM.Mounts {
-					m := &existingVM.Mounts[i]
-					if err := mountMgr.CreateMountImage(m, name); err != nil {
-						return fmt.Errorf("failed to create mount image for '%s': %w", m.GuestTag, err)
-					}
-
-					// Device names: vdb, vdc, vdd, etc. (vda is rootfs)
-					deviceLetter := string(rune('b' + i))
-					device := fmt.Sprintf("/dev/vd%s", deviceLetter)
-					mountPath := fmt.Sprintf("/mnt/%s", m.GuestTag)
-
-					mountEntries = append(mountEntries, image.MountEntry{
-						Device:    device,
-						MountPath: mountPath,
-						ReadOnly:  m.ReadOnly,
-					})
-
-					mountDrives = append(mountDrives, firecracker.MountDrive{
-						ImagePath: m.ImagePath,
-						Tag:       m.GuestTag,
-						ReadOnly:  m.ReadOnly,
-					})
-				}
-
-				// Inject fstab entries for mounts
-				fmt.Println("Configuring mount points in guest...")
-				if err := image.InjectMountFstab(existingVM.RootfsPath, mountEntries); err != nil {
-					return fmt.Errorf("failed to inject mount fstab: %w", err)
-				}
-
+			}
+			mountDrives, err := mount.NewManager(paths.Mounts).PrepareVM(existingVM, nil)
+			if err != nil {
+				return err
+			}
+			if len(mountDrives) > 0 {
 				// Save updated mount image paths
 				existingVM.Save(paths.VMs)
 			}

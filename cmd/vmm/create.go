@@ -21,6 +21,7 @@ func createCmd() *cobra.Command {
 	var imageName string
 	var kernelName string
 	var mounts []string
+	var noAutostart bool
 
 	cmd := &cobra.Command{
 		Use:   "create <name>",
@@ -134,6 +135,10 @@ func createCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("invalid mount specification: %w", err)
 				}
+				if mount.OnTmpfs(parsedMount.HostPath) {
+					fmt.Printf("Warning: %s is on tmpfs, which is emptied at reboot: the '%s' mount will be skipped when the VM starts at boot\n",
+						parsedMount.HostPath, parsedMount.GuestTag)
+				}
 				vmMounts = append(vmMounts, *parsedMount)
 			}
 
@@ -148,6 +153,7 @@ func createCmd() *cobra.Command {
 			newVM.TapDevice = network.GenerateTapName(newVM.ID)
 			newVM.DNSServers = dnsServers
 			newVM.Mounts = vmMounts
+			newVM.AutoStart = !noAutostart
 
 			// Set paths
 			newVM.SocketPath = fmt.Sprintf("%s/%s.sock", paths.Sockets, name)
@@ -176,6 +182,9 @@ func createCmd() *cobra.Command {
 				fmt.Printf("  Kernel: %s\n", newVM.Kernel)
 			}
 			fmt.Printf("  TAP device: %s, MAC: %s\n", newVM.TapDevice, newVM.MacAddress)
+			if !newVM.AutoStart {
+				fmt.Println("  Autostart: off")
+			}
 			if newVM.SSHPublicKey != "" {
 				fmt.Printf("  SSH key: configured\n")
 			}
@@ -204,6 +213,7 @@ func createCmd() *cobra.Command {
 	cmd.Flags().StringVar(&imageName, "image", "", "Name of rootfs image to use (from 'vmm image import')")
 	cmd.Flags().StringVar(&kernelName, "kernel", "", "Name of kernel to use (from 'vmm kernel import')")
 	cmd.Flags().StringArrayVar(&mounts, "mount", nil, "Mount host directory in VM (format: /host/path:tag[:ro|rw])")
+	cmd.Flags().BoolVar(&noAutostart, "no-autostart", false, "Don't start this VM at boot (change later with 'vmm set <name> autostart on')")
 	cmd.RegisterFlagCompletionFunc("kernel", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return completeKernelNames(cmd, nil, toComplete)
 	})

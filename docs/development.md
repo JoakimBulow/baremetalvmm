@@ -103,7 +103,7 @@ It installs `vmm.service` and `vmm-web.service`, enables both, generates a rando
 
 ### Auto-Start VMs on Boot
 
-`vmm.service` is a oneshot unit: at boot it runs `vmm autostart` (starting VMs with `auto_start: true`, the default) and at shutdown `vmm autostop`, which stops every running VM.
+`vmm.service` is a oneshot unit: at boot it runs `vmm autostart` (starting VMs with `auto_start: true`, the default; change it with `vmm set <name> autostart on|off` or `vmm create --no-autostart`) and at shutdown `vmm autostop`, which stops every running VM.
 
 ```bash
 sudo systemctl enable vmm

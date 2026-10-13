@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 
 	"github.com/raesene/baremetalvmm/internal/vm"
 )
@@ -13,6 +14,19 @@ import (
 // Manager handles mount image creation and management
 type Manager struct {
 	MountsDir string
+}
+
+// tmpfsMagic is TMPFS_MAGIC from linux/magic.h.
+const tmpfsMagic = 0x01021994
+
+// OnTmpfs reports whether path is on a tmpfs, such as /tmp on Fedora, whose
+// contents are gone after a reboot.
+func OnTmpfs(path string) bool {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return false
+	}
+	return st.Type == tmpfsMagic
 }
 
 // NewManager creates a new mount manager

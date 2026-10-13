@@ -29,6 +29,7 @@ func newRootCmd() *cobra.Command {
 		listCmd(),
 		startCmd(),
 		stopCmd(),
+		setCmd(),
 		sshCmd(),
 		cpCmd(),
 		consoleCmd(),

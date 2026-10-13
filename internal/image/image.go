@@ -1237,6 +1237,52 @@ func InjectMountFstab(rootfsPath string, mounts []MountEntry) error {
 		return fmt.Errorf("failed to write fstab: %w", err)
 	}
 
+	return installMountService(mountPoint, len(mounts) > 0)
+}
+
+const mountServiceName = "vmm-mounts.service"
+
+// mountServiceUnit mounts the fstab entries once the guest is up. The rootfs
+// images don't ship udev, so systemd never sees /dev/vdX as plugged and skips
+// their fstab mounts at boot. "mount -a" leaves mounted filesystems alone, so
+// this is a no-op in images that do have udev.
+const mountServiceUnit = `# VMM generated: mounts host directories attached with --mount
+[Unit]
+Description=Mount vmm host directories
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/mount -a
+
+[Install]
+WantedBy=multi-user.target
+`
+
+// installMountService enables vmm-mounts.service in the mounted rootfs at
+// root, or removes it when the VM no longer has mounts.
+func installMountService(root string, enable bool) error {
+	unitPath := filepath.Join(root, "etc", "systemd", "system", mountServiceName)
+	wantsDir := filepath.Join(root, "etc", "systemd", "system", "multi-user.target.wants")
+	linkPath := filepath.Join(wantsDir, mountServiceName)
+
+	os.Remove(linkPath)
+	if !enable {
+		if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove %s: %w", mountServiceName, err)
+		}
+		return nil
+	}
+	if err := os.MkdirAll(wantsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create %s: %w", wantsDir, err)
+	}
+	if err := os.WriteFile(unitPath, []byte(mountServiceUnit), 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", mountServiceName, err)
+	}
+	if err := os.Symlink("/etc/systemd/system/"+mountServiceName, linkPath); err != nil {
+		return fmt.Errorf("failed to enable %s: %w", mountServiceName, err)
+	}
 	return nil
 }
 

@@ -66,7 +66,7 @@ Future work (P4 — significant effort, deferred):
 - `internal/firecracker/` — Firecracker SDK wrapper, socket API
 - `internal/network/` — TAP, bridge, iptables, NAT (MASQUERADE with `! -o vmm-br0`)
 - `internal/image/` — Kernel/rootfs download, Docker import, snapshots
-- `internal/mount/` — Host directory mount as ext4 block devices
+- `internal/mount/` — Host directory mount as ext4 block devices. `Manager.PrepareVM` is the one place mounts are set up for a start (CLI, web, autostart): builds the images, writes guest fstab and returns drives numbered by attached position. The rootfs has no udev, so systemd skips fstab mounts of `/dev/vdX`; `image.InjectMountFstab` also enables a guest `vmm-mounts.service` that runs `mount -a`
 - `internal/snapshot/` — Full VM snapshots (guest memory + device state via Firecracker's snapshot API, plus a copy of the rootfs and mount images taken while the VM is paused). Restore is in-place: it rolls a VM back to one of its own snapshots, reusing the frozen IP/MAC/TAP identity. Stored under `/var/lib/vmm/snapshots/<vm>/<name>/` (`memory`, `vmstate`, `rootfs.ext4`, `snapshot.json`). Firecracker snapshot primitives (`PauseVM`, `CreateSnapshotFiles`, `ResumeVM`, `RestoreVM`) live in `internal/firecracker/client.go`.
 - `internal/upgrade/` — Release lookup, checksum-verified download/extract, atomic binary swap (`.prev` backups) and Firecracker install, used by `vmm upgrade` and the web UI's update notice (`internal/web/updates.go`)
 - `internal/sshkey/` — VMM-managed Ed25519 SSH key pair (auto-generated in `/var/lib/vmm/ssh/`)
@@ -82,11 +82,12 @@ Data directory: `/var/lib/vmm` (vms, images, kernels, logs, sockets, mounts, clu
 ## CLI Commands
 
 ```
-vmm create <name> [--cpus N] [--memory MB] [--disk MB] [--ssh-key PATH] [--dns SERVER] [--image NAME] [--kernel NAME] [--mount PATH:TAG[:ro|rw]]
+vmm create <name> [--cpus N] [--memory MB] [--disk MB] [--ssh-key PATH] [--dns SERVER] [--image NAME] [--kernel NAME] [--mount PATH:TAG[:ro|rw]] [--no-autostart]
 vmm start <name>
 vmm stop <name>
 vmm delete <name> [-f]
 vmm list [-a]
+vmm set <name> autostart on|off
 vmm ssh <name> [-u user]
 vmm cp [-r] [-u user] <src> <dest>     # one side is <vm>:<path>
 vmm console <name> [--full] [-f] [-n LINES]
