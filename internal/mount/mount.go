@@ -72,8 +72,9 @@ func (m *Manager) CreateMountImage(mount *vm.Mount, vmName string) error {
 		return fmt.Errorf("failed to create image file: %w", err)
 	}
 
-	// Create ext4 filesystem
-	mkfsCmd := exec.Command("mkfs.ext4", "-F", "-L", mount.GuestTag, imagePath)
+	// -i 4096: one inode per entry, matching the 4KB/entry budget in
+	// calculateDirSize (mkfs's 16KB default starves small-file trees).
+	mkfsCmd := exec.Command("mkfs.ext4", "-F", "-i", "4096", "-L", mount.GuestTag, imagePath)
 	if output, err := mkfsCmd.CombinedOutput(); err != nil {
 		os.Remove(imagePath)
 		return fmt.Errorf("failed to create ext4 filesystem: %w: %s", err, string(output))
@@ -281,6 +282,10 @@ func calculateDirSize(path string) (int, error) {
 
 	totalBytes := contentBytes + inodeOverhead
 	sizeMB := int((totalBytes+1024*1024-1)/(1024*1024)) + fixedOverheadMB
+
+	// +25% headroom for ext4 metadata the budget doesn't model
+	// (journal, inode tables, block descriptors).
+	sizeMB += sizeMB / 4
 
 	if sizeMB < 64 {
 		sizeMB = 64
