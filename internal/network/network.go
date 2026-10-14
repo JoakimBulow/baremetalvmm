@@ -321,21 +321,24 @@ func (m *Manager) setupNAT() error {
 		}
 	}
 
-	// Allow forwarding from bridge
+	// Allow forwarding from the bridge to any interface. Matching on the
+	// bridge alone rather than a specific host interface keeps VM egress
+	// working when the active interface changes (docks, Wi-Fi, VPNs).
 	if err := m.runCmd("iptables", "-C", "FORWARD",
-		"-i", m.BridgeName, "-o", m.HostInterface, "-j", "ACCEPT"); err != nil {
+		"-i", m.BridgeName, "-j", "ACCEPT"); err != nil {
 		if err := m.runCmd("iptables", "-A", "FORWARD",
-			"-i", m.BridgeName, "-o", m.HostInterface, "-j", "ACCEPT"); err != nil {
+			"-i", m.BridgeName, "-j", "ACCEPT"); err != nil {
 			return err
 		}
 	}
 
-	// Allow forwarding to bridge (established connections)
+	// Allow reply traffic back to the bridge (established connections),
+	// regardless of which interface it arrives on
 	if err := m.runCmd("iptables", "-C", "FORWARD",
-		"-i", m.HostInterface, "-o", m.BridgeName,
+		"-o", m.BridgeName,
 		"-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"); err != nil {
 		if err := m.runCmd("iptables", "-A", "FORWARD",
-			"-i", m.HostInterface, "-o", m.BridgeName,
+			"-o", m.BridgeName,
 			"-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"); err != nil {
 			return err
 		}

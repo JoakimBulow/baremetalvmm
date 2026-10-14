@@ -182,16 +182,30 @@ if iptables -t nat -C POSTROUTING -s "$SUBNET" ! -o "$BRIDGE_NAME" -j MASQUERADE
     RULES_REMOVED=$((RULES_REMOVED + 1))
 fi
 
-# Remove FORWARD rules
+# Remove FORWARD rules. Current vmm creates NIC-agnostic rules; older
+# versions pinned the host interface, so clean both shapes.
+if iptables -C FORWARD -i "$BRIDGE_NAME" -j ACCEPT 2>/dev/null; then
+    iptables -D FORWARD -i "$BRIDGE_NAME" -j ACCEPT 2>/dev/null || true
+    echo -e "  ${GREEN}Removed FORWARD rule (bridge to any)${NC}"
+    RULES_REMOVED=$((RULES_REMOVED + 1))
+fi
+
+if iptables -C FORWARD -o "$BRIDGE_NAME" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; then
+    iptables -D FORWARD -o "$BRIDGE_NAME" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+    echo -e "  ${GREEN}Removed FORWARD rule (replies to bridge)${NC}"
+    RULES_REMOVED=$((RULES_REMOVED + 1))
+fi
+
+# Legacy (pinned host interface) shapes from older versions
 if iptables -C FORWARD -i "$BRIDGE_NAME" -o "$HOST_IFACE" -j ACCEPT 2>/dev/null; then
     iptables -D FORWARD -i "$BRIDGE_NAME" -o "$HOST_IFACE" -j ACCEPT 2>/dev/null || true
-    echo -e "  ${GREEN}Removed FORWARD rule (bridge to host)${NC}"
+    echo -e "  ${GREEN}Removed legacy FORWARD rule (bridge to host)${NC}"
     RULES_REMOVED=$((RULES_REMOVED + 1))
 fi
 
 if iptables -C FORWARD -i "$HOST_IFACE" -o "$BRIDGE_NAME" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; then
     iptables -D FORWARD -i "$HOST_IFACE" -o "$BRIDGE_NAME" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
-    echo -e "  ${GREEN}Removed FORWARD rule (host to bridge)${NC}"
+    echo -e "  ${GREEN}Removed legacy FORWARD rule (host to bridge)${NC}"
     RULES_REMOVED=$((RULES_REMOVED + 1))
 fi
 
