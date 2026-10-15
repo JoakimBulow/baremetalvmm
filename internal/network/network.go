@@ -84,13 +84,8 @@ func (m *Manager) EnsureBridge() error {
 // is in any other zone. The change is made both at runtime and permanently,
 // so it survives a firewall-cmd --reload. Without firewalld this is a no-op.
 func (m *Manager) ensureFirewalldZone() error {
-	if m.run == nil {
-		if _, err := exec.LookPath("firewall-cmd"); err != nil {
-			return nil
-		}
-	}
-	if err := m.runCmd("firewall-cmd", "--state"); err != nil {
-		return nil // installed but not running
+	if !m.firewalldRunning() {
+		return nil
 	}
 	if m.runCmd("firewall-cmd", "--zone=trusted", "--query-interface="+m.BridgeName) == nil {
 		return nil
@@ -374,6 +369,16 @@ func (m *Manager) forwardingRules() []staticRule {
 		{"nat", false, []string{"POSTROUTING", "-s", m.Subnet, "-o", m.BridgeName,
 			"-m", "conntrack", "--ctstate", "DNAT", "-j", "MASQUERADE"}},
 	}
+}
+
+// firewalldRunning reports whether firewalld is installed and running.
+func (m *Manager) firewalldRunning() bool {
+	if m.run == nil {
+		if _, err := exec.LookPath("firewall-cmd"); err != nil {
+			return false
+		}
+	}
+	return m.runCmd("firewall-cmd", "--state") == nil
 }
 
 // bridgeExists checks if the bridge interface exists

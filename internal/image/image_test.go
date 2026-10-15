@@ -121,7 +121,7 @@ func TestInstallMountService(t *testing.T) {
 	link := filepath.Join(root, "etc/systemd/system/multi-user.target.wants", mountServiceName)
 
 	// Enabling twice must not fail on the existing symlink.
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if err := installMountService(root, true); err != nil {
 			t.Fatalf("enable: %v", err)
 		}

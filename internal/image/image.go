@@ -6,6 +6,7 @@ import (
 	"debug/elf"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -347,7 +348,6 @@ func createExt4Image(imagePath, sourceDir string, sizeMB int) error {
 	return nil
 }
 
-// runCmdOutput runs a command and returns its output
 // containerEngine returns the CLI used to export images: docker, or podman
 // (the default on Fedora and RHEL), whose create/export/rm commands match.
 func containerEngine() (string, error) {
@@ -356,9 +356,10 @@ func containerEngine() (string, error) {
 			return name, nil
 		}
 	}
-	return "", fmt.Errorf("image import needs docker or podman, and neither was found in PATH")
+	return "", errors.New("image import needs docker or podman, and neither was found in PATH")
 }
 
+// runCmdOutput runs a command and returns its output
 func runCmdOutput(name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	output, err := cmd.Output()
