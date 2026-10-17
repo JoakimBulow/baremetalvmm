@@ -91,7 +91,7 @@ sudo vmm create myvm --cpus 2 --memory 1024
 sudo vmm start myvm
 
 # SSH in (also works with standard ssh as root@<vm-ip>)
-vmm ssh myvm
+sudo vmm ssh myvm
 
 # Copy files in and out
 sudo vmm cp ./app.tar.gz myvm:/tmp/

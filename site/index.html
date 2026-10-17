@@ -54,10 +54,10 @@
                     </div>
 <pre class="code"><code><span class="prompt">$ </span><span class="tok-cmd">sudo vmm create</span> <span class="tok-data">dev-box</span> <span class="tok-flag">--cpus 2 --memory 2048</span>
 <span class="prompt">$ </span><span class="tok-cmd">sudo vmm start</span> <span class="tok-data">dev-box</span>
-<span class="prompt">$ </span><span class="tok-cmd">vmm list</span>
+<span class="prompt">$ </span><span class="tok-cmd">sudo vmm list</span>
 <span class="tok-flag">NAME      ID        STATE    CPUs  MEMORY   IP ADDRESS</span>
 dev-box   <span class="tok-flag">1e2e5700</span>  <span class="tok-sel">running</span>  2     2048 MB  <span class="tok-data">172.16.0.2</span>
-<span class="prompt">$ </span><span class="tok-cmd">vmm ssh</span> <span class="tok-data">dev-box</span>
+<span class="prompt">$ </span><span class="tok-cmd">sudo vmm ssh</span> <span class="tok-data">dev-box</span>
 root@vmm-guest:~# <span class="caret"></span></code></pre>
                 </div>
             </div>
@@ -99,7 +99,7 @@ root@vmm-guest:~# <span class="caret"></span></code></pre>
                     <span class="hw">access / ssh</span>
                     <h3>SSH that just works</h3>
                     <p>vmm generates and manages its own Ed25519 key and injects it into every VM, so <code class="mono">--ssh-key</code> is optional. Your own keys are added alongside it.</p>
-                    <span class="cmdline"><span class="prompt">$</span><span><span class="tok-cmd">vmm ssh</span> <span class="tok-data">myvm</span></span></span>
+                    <span class="cmdline"><span class="prompt">$</span><span><span class="tok-cmd">sudo vmm ssh</span> <span class="tok-data">myvm</span></span></span>
                 </article>
 
                 <article class="panel feature">
@@ -324,7 +324,7 @@ root@vmm-guest:~# <span class="caret"></span></code></pre>
                         <div class="code-wrap">
 <pre class="code"><code><span class="prompt">$ </span><span class="tok-cmd">sudo vmm create</span> <span class="tok-data">myvm</span> <span class="tok-flag">--cpus 2 --memory 1024</span>
 <span class="prompt">$ </span><span class="tok-cmd">sudo vmm start</span> <span class="tok-data">myvm</span>
-<span class="prompt">$ </span><span class="tok-cmd">vmm ssh</span> <span class="tok-data">myvm</span></code></pre>
+<span class="prompt">$ </span><span class="tok-cmd">sudo vmm ssh</span> <span class="tok-data">myvm</span></code></pre>
                         </div>
                         <p class="note">Optional: <code>vmm config init</code> writes <code>~/.config/vmm/config.json</code> for VM defaults, or a different data directory with <code>--data-dir</code>.</p>
                     </li>
