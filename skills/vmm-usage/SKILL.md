@@ -194,7 +194,7 @@ sudo vmm ssh lab -- 'ls -l /dev/kvm'
 ### Differences from Firecracker VMs
 
 - **No memory snapshots**: `vmm snapshot create` is refused for Cloud Hypervisor VMs. `vmm image snapshot` (rootfs only) still works.
-- **Stop**: a clean ACPI power-off, usually under a second with `nested-kernel`. With other kernels the guest ignores the power button and is stopped with SIGTERM after ~3 seconds.
+- **Stop**: a clean ACPI power-off, usually under a second with `nested-kernel` (5-7s for a Kubernetes node). With kernels lacking the ACPI button driver the guest ignores the power button and is stopped with SIGTERM after 30 seconds.
 - **Logs**: `/var/lib/vmm/logs/<name>.log` holds Cloud Hypervisor's own output (check it if start fails); the serial console is in `sudo vmm console <name> --full` as usual.
 - The backend is fixed at create time.
 

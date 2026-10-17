@@ -18,12 +18,6 @@ import (
 )
 
 const (
-	// GracefulWait is how long to wait for the guest to power itself off
-	// after a graceful shutdown request before escalating to signals. Guest
-	// kernels often can't see the request (no i8042 for Firecracker's
-	// Ctrl+Alt+Del, no ACPI button for Cloud Hypervisor's power button), so
-	// this is kept short.
-	GracefulWait = 3 * time.Second
 	// sigtermWait is how long to wait for the process to exit after SIGTERM.
 	sigtermWait = 5 * time.Second
 	// sigkillWait is how long to wait for the process to disappear after SIGKILL.
@@ -31,6 +25,16 @@ const (
 	// exitPollInterval is how often process liveness is polled while waiting.
 	exitPollInterval = 100 * time.Millisecond
 )
+
+// gracefulWait is how long to wait for the guest to power itself off
+// after a graceful shutdown request before escalating to signals. A
+// signal kills the guest without flushing its page cache, so writes it
+// hadn't synced are lost; a Kubernetes node needs well over the 3s this
+// used to be. Guests that shut down sooner return as soon as they exit.
+// Kernels that can't see the request (built without the AT keyboard
+// driver for Firecracker's Ctrl+Alt+Del, or the ACPI button for Cloud
+// Hypervisor's power button) wait the full time before the signal.
+var gracefulWait = 30 * time.Second
 
 // Binary is the name of a hypervisor's executable, e.g. "firecracker".
 type Binary string
@@ -176,7 +180,7 @@ func (b Binary) Terminate(ctx context.Context, v *vm.VM, graceful func(ctx conte
 			shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			err := graceful(shutdownCtx)
 			cancel()
-			if err == nil && b.WaitForExit(pid, v.SocketPath, GracefulWait) {
+			if err == nil && b.WaitForExit(pid, v.SocketPath, gracefulWait) {
 				return finish(v)
 			}
 		}

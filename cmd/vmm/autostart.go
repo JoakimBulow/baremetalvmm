@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/lifecycle"
@@ -71,27 +72,42 @@ func autostopCmd() *cobra.Command {
 				return fmt.Errorf("failed to list VMs: %w", err)
 			}
 
-			netMgr := newNetManager()
-			stopped := 0
-
+			var running []*vm.VM
 			for _, v := range vms {
 				hypervisor.UpdateVMState(v)
-				if v.State != vm.StateRunning {
-					continue
+				if v.State == vm.StateRunning {
+					running = append(running, v)
 				}
+			}
 
+			// Stop the VMs in parallel: each one gets up to 30s to shut down
+			// cleanly, and one at a time a busy host would outlast systemd's
+			// stop timeout and have the rest killed.
+			errs := make([]error, len(running))
+			var wg sync.WaitGroup
+			for i, v := range running {
 				fmt.Printf("Stopping VM '%s'...\n", v.Name)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					errs[i] = hypervisor.Terminate(context.Background(), v)
+				}()
+			}
+			wg.Wait()
 
-				ctx := context.Background()
-				if err := hypervisor.Terminate(ctx, v); err != nil {
-					fmt.Printf("Warning: %v\n", err)
+			// Port forwards and state afterwards, one VM at a time: iptables
+			// calls can't safely overlap.
+			netMgr := newNetManager()
+			stopped := 0
+			for i, v := range running {
+				if errs[i] != nil {
+					fmt.Printf("Warning: %v\n", errs[i])
 					v.State = vm.StateError
 					if saveErr := v.Save(paths.VMs); saveErr != nil {
 						fmt.Printf("Warning: failed to save VM state: %v\n", saveErr)
 					}
 					continue
 				}
-
 				clearPortForwards(netMgr, v)
 				v.State = vm.StateStopped
 				v.Save(paths.VMs)

@@ -8,6 +8,8 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/bin/vmm autostart
 ExecStop=/usr/local/bin/vmm autostop
+# autostop gives each VM up to 30s to shut down cleanly (in parallel)
+TimeoutStopSec=180
 
 [Install]
 WantedBy=multi-user.target

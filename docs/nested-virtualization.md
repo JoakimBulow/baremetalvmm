@@ -161,7 +161,7 @@ Kata pods are three levels deep (host → node VM → Kata VM), so they start in
 
 - **Same images.** Cloud Hypervisor boots the same kernels and root filesystems as Firecracker. Drives appear in the same order (`/dev/vda` for the rootfs, then mounts as `vdb`, `vdc`...), and the guest gets its address from the same `ip=` boot argument on the same TAP device and bridge.
 - **One process per VM.** vmm starts `cloud-hypervisor` with the VM's API socket and waits until the VM reports it is running. If it exits instead, the start fails with the last lines of its log.
-- **Clean shutdown.** Cloud Hypervisor asks a guest to stop with the ACPI power button. The rootfs images have no udev, so systemd-logind ignores the button. vmm therefore installs a small `vmm-powerbutton.service` in Cloud Hypervisor guests that powers off when it's pressed, which needs the nested kernel's input and ACPI button drivers. If the guest doesn't power off within 3 seconds (for example with the default kernel), vmm falls back to SIGTERM, then SIGKILL, as it does for Firecracker.
+- **Clean shutdown.** Cloud Hypervisor asks a guest to stop with the ACPI power button. The rootfs images have no udev, so systemd-logind ignores the button. vmm therefore installs a small `vmm-powerbutton.service` in Cloud Hypervisor guests that powers off when it's pressed, which needs the nested kernel's input and ACPI button drivers. If the guest doesn't power off within 30 seconds (for example with a kernel built without those drivers), vmm falls back to SIGTERM, then SIGKILL, as it does for Firecracker.
 - **The VM records its backend.** A VM's JSON file has `"backend": "cloud-hypervisor"` and `"nested": true`. Firecracker VMs have no `backend` key, so older vmm versions can still read them.
 
 ## Limitations
@@ -181,5 +181,5 @@ Kata pods are three levels deep (host → node VM → Kata VM), so they start in
 | `nested VMs need a kernel with KVM support` | `sudo vmm kernel pull nested-kernel`, or pass `--kernel` |
 | `cloud-hypervisor exited while starting the VM` | `/var/lib/vmm/logs/<name>.log` has Cloud Hypervisor's own output |
 | No `/dev/kvm` in the guest | The VM was created with a kernel built without KVM. Recreate it with the nested kernel |
-| Every stop takes about 3 seconds | The guest didn't see the power button and was stopped with SIGTERM. Use the nested kernel |
+| Every stop takes about 30 seconds | The guest didn't see the power button and was stopped with SIGTERM. Use the nested kernel, or a current `k8s-kernel` for cluster nodes |
 | Boot messages and kernel panics | `sudo vmm console <name> --full` |

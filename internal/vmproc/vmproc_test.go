@@ -198,6 +198,10 @@ func TestTerminateEscalatesWhenGracefulIsIgnored(t *testing.T) {
 	// which /proc would still list.
 	go func() { _, _ = cmd.Process.Wait() }()
 
+	old := gracefulWait
+	gracefulWait = 500 * time.Millisecond
+	defer func() { gracefulWait = old }()
+
 	v := &vm.VM{Name: "t", SocketPath: socket}
 	asked := false
 	err := firecracker.Terminate(context.Background(), v, func(context.Context) error {

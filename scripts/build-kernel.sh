@@ -212,9 +212,13 @@ create_kernel_config() {
     ./scripts/config --enable CONFIG_VIRTIO_NET
     ./scripts/config --enable CONFIG_SERIAL_8250
     ./scripts/config --enable CONFIG_SERIAL_8250_CONSOLE
-    # i8042 keyboard controller: Firecracker's shutdown request is delivered as
-    # Ctrl+Alt+Del through this device. Without it the guest never sees the
-    # request and can only be terminated by signalling the VMM.
+    # i8042 keyboard controller and AT keyboard: Firecracker's shutdown request
+    # is delivered as Ctrl+Alt+Del through them. Without them the guest never
+    # sees the request and can only be killed with a signal, losing writes it
+    # hadn't flushed. KEYBOARD_ATKBD depends on INPUT_KEYBOARD, which the
+    # Firecracker base config leaves off, so olddefconfig used to drop it.
+    ./scripts/config --enable CONFIG_INPUT
+    ./scripts/config --enable CONFIG_INPUT_KEYBOARD
     ./scripts/config --enable CONFIG_SERIO
     ./scripts/config --enable CONFIG_SERIO_I8042
     ./scripts/config --enable CONFIG_KEYBOARD_ATKBD
@@ -366,6 +370,15 @@ create_kernel_config() {
         if ! grep -q "^${opt}=y" .config; then
             log_error "CRITICAL: ${opt} not enabled after olddefconfig! Check dependencies."
             grep "${opt}" .config || echo "${opt} not found in .config"
+        fi
+    done
+
+    # Clean shutdown under Firecracker depends on these; fail rather than
+    # build a kernel that can only be stopped with a signal.
+    for opt in CONFIG_INPUT_KEYBOARD CONFIG_SERIO_I8042 CONFIG_KEYBOARD_ATKBD; do
+        if ! grep -q "^${opt}=y" .config; then
+            log_error "REQUIRED option missing: ${opt} (Firecracker's Ctrl+Alt+Del shutdown needs it)"
+            exit 1
         fi
     done
 }

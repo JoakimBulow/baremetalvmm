@@ -89,6 +89,17 @@ Check Firecracker socket:
 ls -la /var/lib/vmm/sockets/
 ```
 
+## Stopping a VM Takes 30 Seconds
+
+vmm asks the guest to shut down (Ctrl+Alt+Del under Firecracker, the ACPI power button under Cloud Hypervisor) and waits up to 30 seconds for it to finish before sending a signal, which would lose any writes the guest hadn't flushed. A guest that shuts down cleanly stops in well under a second, or a few seconds for a Kubernetes node. If every stop takes 30 seconds, the VM's kernel can't see the request: kernels released before v0.17.0 were built without the AT keyboard driver Firecracker needs. Download current ones:
+
+```bash
+sudo vmm kernel pull vmlinux.bin --force   # the default kernel
+sudo vmm kernel pull k8s-kernel --force    # and any other kernels you use
+```
+
+The new kernel is used from the VM's next start.
+
 ## VM Shows as Stopped When Running
 
 Check with `sudo vmm list`. Without sudo, vmm can't read its data directory (`/var/lib/vmm` is root-only) and fails with "permission denied". A VM's state comes from its hypervisor process, not its socket file, so a VM whose process is alive is reported as running even if the socket has gone missing.
