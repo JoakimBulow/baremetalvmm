@@ -36,7 +36,7 @@ func ChooseBackend(imgMgr *image.Manager, backend string, nested bool, kernel st
 		}
 		if kernel == "" {
 			if !imgMgr.KernelExists(NestedKernel) {
-				return "", "", fmt.Errorf("nested VMs need a kernel with KVM support; build one with 'sudo vmm kernel build --version 6.1 --name %s --profile nested', or pass --kernel", NestedKernel)
+				return "", "", fmt.Errorf("nested VMs need a kernel with KVM support; download it with 'sudo vmm kernel pull %s', or pass --kernel", NestedKernel)
 			}
 			kernel = NestedKernel
 		}

@@ -4,9 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       kernel_series:
-        description: 'Kernel series to build (e.g. 6.1)'
+        description: 'Kernel series for the default kernel (e.g. 6.1)'
         required: false
         default: '6.1'
+      only:
+        description: 'Build only this kernel variant (manual runs)'
+        required: false
+        default: 'all'
+        type: choice
+        options: [all, default, nested, k8s, security, kasan, cifs-vuln]
   push:
     paths:
       - 'scripts/build-kernel.sh'
@@ -22,6 +28,7 @@ permissions:
 
 jobs:
   build-default:
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'default'
     runs-on: ubuntu-latest
     env:
       KERNEL_SERIES: ${{ github.event.inputs.kernel_series || '6.1' }}
@@ -112,6 +119,7 @@ jobs:
             vmlinux.bin.sha256
 
   build-security:
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'security'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -229,6 +237,7 @@ jobs:
             security-vmlinux.bin.sha256
 
   build-security-kasan:
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'kasan'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -335,6 +344,7 @@ jobs:
             kasan-vmlinux.bin.sha256
 
   build-security-cifs-vuln:
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'cifs-vuln'
     runs-on: ubuntu-latest
     env:
       KERNEL_SERIES: '6.12'
@@ -469,6 +479,7 @@ jobs:
             cifs-vuln-vmlinux.bin.sha256
 
   build-k8s:
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'k8s'
     runs-on: ubuntu-latest
     env:
       KERNEL_SERIES: '6.6'
@@ -564,3 +575,95 @@ jobs:
             --notes "$NOTES" \
             k8s-vmlinux.bin \
             k8s-vmlinux.bin.sha256
+
+  build-nested:
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'nested'
+    runs-on: ubuntu-latest
+    env:
+      KERNEL_SERIES: '6.1'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Query kernel.org for latest 6.1 patch version
+        id: kernel_version
+        run: |
+          LATEST=$(curl -fsSL https://www.kernel.org/releases.json | \
+            jq -r --arg series "$KERNEL_SERIES" \
+            '[.releases[] | select(.version | startswith($series + ".")) | .version] | sort_by(split(".") | map(tonumber)) | last')
+
+          if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
+            echo "Could not determine latest kernel version for series $KERNEL_SERIES"
+            exit 1
+          fi
+
+          echo "version=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Found latest kernel version: $LATEST"
+
+      - name: Check if release already exists
+        id: check_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="nested-kernel-${{ steps.kernel_version.outputs.version }}"
+          if gh release view "$TAG" &>/dev/null; then
+            echo "Release $TAG already exists, skipping build"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release $TAG does not exist, proceeding with build"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install build dependencies
+        if: steps.check_release.outputs.exists == 'false'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential flex bison bc libelf-dev libssl-dev wget curl jq
+
+      - name: Build nested virtualization kernel
+        if: steps.check_release.outputs.exists == 'false'
+        run: |
+          chmod +x scripts/build-kernel.sh
+          sudo bash scripts/build-kernel.sh \
+            --version "$KERNEL_SERIES" \
+            --name nested-vmlinux.bin \
+            --config-profile nested \
+            --output "${{ github.workspace }}"
+
+      - name: Generate checksum
+        if: steps.check_release.outputs.exists == 'false'
+        run: |
+          sha256sum nested-vmlinux.bin > nested-vmlinux.bin.sha256
+
+      - name: Create GitHub release
+        if: steps.check_release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="nested-kernel-${{ steps.kernel_version.outputs.version }}"
+          TITLE="Nested Virtualization Kernel ${{ steps.kernel_version.outputs.version }} (Linux ${KERNEL_SERIES} LTS, KVM)"
+          NOTES="Linux kernel ${{ steps.kernel_version.outputs.version }} for nested VMs: guests that run their own VMs.
+
+          **Use this kernel with \`vmm create --nested\`**, which picks it up automatically once pulled. Nested VMs run under Cloud Hypervisor (Firecracker can't expose virtualization to guests), and need nested KVM enabled on the host.
+
+          Built from the ${KERNEL_SERIES} LTS series with everything in the default kernel plus:
+          - KVM (Intel VT-x and AMD-V), so the guest has /dev/kvm
+          - vhost-net and vhost-vsock, for hypervisors running inside the guest
+          - evdev and the ACPI button driver, so Cloud Hypervisor can shut the guest down cleanly
+
+          **Pair with**: \`rootfs-24.04-*\` (Default Ubuntu Rootfs)
+
+          Quick start:
+          \`\`\`
+          curl -fsSL https://raesene.github.io/baremetalvmm/install.sh | sudo bash -s -- --with-cloud-hypervisor
+          sudo vmm kernel pull nested-kernel
+          sudo vmm create myvm --nested --cpus 2 --memory 2048
+          \`\`\`
+
+          Built by GitHub Actions from \`scripts/build-kernel.sh --config-profile nested\`."
+
+          gh release create "$TAG" \
+            --title "$TITLE" \
+            --notes "$NOTES" \
+            nested-vmlinux.bin \
+            nested-vmlinux.bin.sha256

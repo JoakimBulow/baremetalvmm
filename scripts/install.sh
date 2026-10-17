@@ -236,7 +236,9 @@ if [ "$NO_IMAGES" = 0 ]; then
     else
         warn "default images: $(tail -1 "$TMP/pull.log"); run 'sudo vmm image pull' later"
     fi
-    for kernel in k8s-kernel security-kernel; do
+    KERNELS="k8s-kernel security-kernel"
+    [ -x "$INSTALL_DIR/cloud-hypervisor" ] && KERNELS="$KERNELS nested-kernel"
+    for kernel in $KERNELS; do
         if "$INSTALL_DIR/vmm" kernel pull "$kernel" </dev/null >"$TMP/pull.log" 2>&1; then
             ok "$kernel"
         elif grep -q "already exists" "$TMP/pull.log"; then
@@ -304,8 +306,8 @@ if [ -z "$PREV_VERSION" ]; then
     say ""
 fi
 if [ -x "$CH_BIN" ] && [ ! -f "$DATA_DIR/images/kernels/nested-kernel" ]; then
-    say "Nested VMs need a kernel with KVM. Build it once with:"
-    say "  sudo vmm kernel build --version 6.1 --name nested-kernel --profile nested"
+    say "Nested VMs need a kernel with KVM. Download it with:"
+    say "  sudo vmm kernel pull nested-kernel"
     say ""
 fi
 if [ -n "$WEB_PASSWORD" ]; then
