@@ -15,8 +15,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
 	"github.com/raesene/baremetalvmm/internal/guestfile"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/validate"
 	"github.com/raesene/baremetalvmm/internal/vm"
 )
@@ -81,7 +81,7 @@ func (s *Server) openGuest(r *http.Request) (*vm.VM, *guestfile.Client, error) {
 	if err != nil {
 		return nil, nil, &fileError{http.StatusNotFound, "VM not found"}
 	}
-	firecracker.NewClient().UpdateVMState(v)
+	hypervisor.UpdateVMState(v)
 	if v.State != vm.StateRunning {
 		return nil, nil, &fileError{http.StatusConflict, "VM is not running"}
 	}

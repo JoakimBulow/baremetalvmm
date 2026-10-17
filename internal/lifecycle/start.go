@@ -4,13 +4,12 @@
 package lifecycle
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/raesene/baremetalvmm/internal/config"
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/image"
 	"github.com/raesene/baremetalvmm/internal/mount"
 	"github.com/raesene/baremetalvmm/internal/network"
@@ -64,6 +63,11 @@ func (o Options) soft(err error) error {
 // rely on.
 func Start(cfg *config.Config, v *vm.VM, opts Options) error {
 	paths := cfg.GetPaths()
+
+	hv := hypervisor.For(v)
+	if err := hypervisor.Supported(v); err != nil {
+		return err
+	}
 
 	imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
 	if err := imgMgr.EnsureDefaultImages(); err != nil {
@@ -169,7 +173,7 @@ func Start(cfg *config.Config, v *vm.VM, opts Options) error {
 		}
 	})
 
-	vmCfg := &firecracker.VMConfig{
+	vmCfg := &vm.LaunchConfig{
 		SocketPath:  v.SocketPath,
 		KernelPath:  v.KernelPath,
 		RootfsPath:  v.RootfsPath,
@@ -184,10 +188,7 @@ func Start(cfg *config.Config, v *vm.VM, opts Options) error {
 		MountDrives: mountDrives,
 	}
 
-	// The VM process is tied to this context, so it must outlive the caller
-	// (an HTTP request, say): never pass a request context here.
-	fcClient := firecracker.NewClient()
-	machine, err := fcClient.StartVM(context.Background(), vmCfg)
+	pid, err := hv.Start(vmCfg)
 	if err != nil {
 		return fmt.Errorf("failed to start VM: %w", err)
 	}
@@ -195,7 +196,7 @@ func Start(cfg *config.Config, v *vm.VM, opts Options) error {
 	startSuccess = true
 
 	v.State = vm.StateRunning
-	v.PID = fcClient.GetVMPID(machine)
+	v.PID = pid
 	v.StartedAt = time.Now()
 	if err := v.Save(paths.VMs); err != nil {
 		// The VM is up and UpdateVMState finds it by its socket, so this

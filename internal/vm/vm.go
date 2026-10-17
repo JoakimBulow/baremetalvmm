@@ -47,6 +47,9 @@ type VM struct {
 	StartedAt    time.Time     `json:"started_at,omitempty"`
 	PortForwards []PortForward `json:"port_forwards,omitempty"`
 	Mounts       []Mount       `json:"mounts,omitempty"`
+	// Backend is the hypervisor the VM runs under. Empty means Firecracker,
+	// which is what every VM created before backends existed uses.
+	Backend string `json:"backend,omitempty"`
 }
 
 // PortForward represents a port forwarding rule
@@ -62,6 +65,38 @@ type Mount struct {
 	GuestTag  string `json:"guest_tag"`  // Tag/name for mount point (/mnt/<tag>)
 	ReadOnly  bool   `json:"read_only"`  // Whether mount is read-only
 	ImagePath string `json:"image_path"` // Path to the ext4 image created from host dir
+}
+
+// LaunchConfig is everything a hypervisor backend needs to boot a VM.
+type LaunchConfig struct {
+	SocketPath  string
+	KernelPath  string
+	RootfsPath  string
+	CPUs        int
+	MemoryMB    int
+	TapDevice   string
+	MacAddress  string
+	KernelArgs  string
+	LogPath     string
+	IPAddress   string
+	Gateway     string
+	Subnet      string
+	MountDrives []MountDrive
+}
+
+// MountDrive is a mount image attached to a VM after its rootfs, in order
+// (/dev/vdb, /dev/vdc, ...).
+type MountDrive struct {
+	ImagePath string
+	Tag       string
+	ReadOnly  bool
+}
+
+// ConsoleLogPath returns where a VM's serial console output goes, given its
+// log path: /var/lib/vmm/logs/myvm.log -> /var/lib/vmm/logs/myvm-console.log.
+func ConsoleLogPath(logPath string) string {
+	ext := filepath.Ext(logPath)
+	return logPath[:len(logPath)-len(ext)] + "-console" + ext
 }
 
 // NewVM creates a new VM with default settings

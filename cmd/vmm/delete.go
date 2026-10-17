@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/image"
 	"github.com/raesene/baremetalvmm/internal/mount"
 	"github.com/raesene/baremetalvmm/internal/network"
@@ -37,8 +37,7 @@ func deleteCmd() *cobra.Command {
 			}
 
 			// Update state based on actual running status
-			fcClient := firecracker.NewClient()
-			fcClient.UpdateVMState(existingVM)
+			hypervisor.UpdateVMState(existingVM)
 
 			// Check if running
 			if existingVM.State == vm.StateRunning {
@@ -50,7 +49,7 @@ func deleteCmd() *cobra.Command {
 				// with no record of how to reach it.
 				fmt.Printf("Stopping VM '%s'...\n", name)
 				ctx := context.Background()
-				if err := fcClient.Terminate(ctx, existingVM); err != nil {
+				if err := hypervisor.Terminate(ctx, existingVM); err != nil {
 					existingVM.State = vm.StateError
 					if saveErr := existingVM.Save(paths.VMs); saveErr != nil {
 						fmt.Printf("Warning: failed to save VM state: %v\n", saveErr)

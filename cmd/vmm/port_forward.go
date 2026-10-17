@@ -7,7 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/network"
 	"github.com/raesene/baremetalvmm/internal/portforward"
 	"github.com/raesene/baremetalvmm/internal/validate"
@@ -53,7 +53,7 @@ while it is stopped, and put back when it starts.`,
 			if existingVM == nil {
 				return fmt.Errorf("VM '%s' not found", name)
 			}
-			firecracker.NewClient().UpdateVMState(existingVM)
+			hypervisor.UpdateVMState(existingVM)
 
 			live, err := portforward.Add(newNetManager(), all, existingVM, pf)
 			if errors.Is(err, portforward.ErrExists) {
@@ -101,9 +101,8 @@ while it is stopped, and put back when it starts.`,
 				}
 				all = []*vm.VM{v}
 			}
-			fcClient := firecracker.NewClient()
 			for _, v := range all {
-				fcClient.UpdateVMState(v)
+				hypervisor.UpdateVMState(v)
 			}
 
 			entries := portforward.List(newNetManager(), all)
@@ -203,7 +202,7 @@ while it is stopped, and put back when it starts.`,
 			if err != nil {
 				return fmt.Errorf("VM '%s' not found", name)
 			}
-			firecracker.NewClient().UpdateVMState(existingVM)
+			hypervisor.UpdateVMState(existingVM)
 			if existingVM.State != vm.StateRunning {
 				return fmt.Errorf("VM '%s' is not running; its forwards are applied when it starts", name)
 			}

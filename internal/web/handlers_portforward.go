@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/network"
 	"github.com/raesene/baremetalvmm/internal/portforward"
 	"github.com/raesene/baremetalvmm/internal/validate"
@@ -55,9 +55,8 @@ func loadAllVMs(vmsDir string) ([]*vm.VM, error) {
 	if err != nil {
 		return nil, err
 	}
-	fcClient := firecracker.NewClient()
 	for _, v := range all {
-		fcClient.UpdateVMState(v)
+		hypervisor.UpdateVMState(v)
 	}
 	return all, nil
 }
@@ -194,7 +193,7 @@ func (s *Server) renderForwardError(w http.ResponseWriter, r *http.Request, name
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	firecracker.NewClient().UpdateVMState(v)
+	hypervisor.UpdateVMState(v)
 	s.renderVMDetail(w, r, v, map[string]interface{}{"Flash": err.Error(), "FlashType": "error"})
 }
 
@@ -245,7 +244,7 @@ func (s *Server) handlePortForwardApply(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "VM not found", http.StatusNotFound)
 		return
 	}
-	firecracker.NewClient().UpdateVMState(v)
+	hypervisor.UpdateVMState(v)
 	if v.State != vm.StateRunning {
 		s.renderForwardError(w, r, name, errors.New("VM is not running; its forwards apply when it starts"))
 		return
@@ -284,7 +283,7 @@ func (s *Server) handleAPIVMPortForwards(w http.ResponseWriter, r *http.Request)
 		jsonError(w, "VM not found", http.StatusNotFound)
 		return
 	}
-	firecracker.NewClient().UpdateVMState(v)
+	hypervisor.UpdateVMState(v)
 	entries := portforward.List(s.netManager(), []*vm.VM{v})
 	if entries == nil {
 		entries = []portforward.Entry{}

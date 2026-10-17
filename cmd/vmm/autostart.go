@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/lifecycle"
 	"github.com/raesene/baremetalvmm/internal/vm"
 	"github.com/spf13/cobra"
@@ -23,7 +23,6 @@ func autostartCmd() *cobra.Command {
 				return fmt.Errorf("failed to list VMs: %w", err)
 			}
 
-			fcClient := firecracker.NewClient()
 			started := 0
 			for _, v := range vms {
 				// Skip VMs not marked for autostart
@@ -32,7 +31,7 @@ func autostartCmd() *cobra.Command {
 				}
 
 				// Update actual state
-				fcClient.UpdateVMState(v)
+				hypervisor.UpdateVMState(v)
 				if v.State == vm.StateRunning {
 					fmt.Printf("VM '%s' is already running\n", v.Name)
 					continue
@@ -72,12 +71,11 @@ func autostopCmd() *cobra.Command {
 				return fmt.Errorf("failed to list VMs: %w", err)
 			}
 
-			fcClient := firecracker.NewClient()
 			netMgr := newNetManager()
 			stopped := 0
 
 			for _, v := range vms {
-				fcClient.UpdateVMState(v)
+				hypervisor.UpdateVMState(v)
 				if v.State != vm.StateRunning {
 					continue
 				}
@@ -85,7 +83,7 @@ func autostopCmd() *cobra.Command {
 				fmt.Printf("Stopping VM '%s'...\n", v.Name)
 
 				ctx := context.Background()
-				if err := fcClient.Terminate(ctx, v); err != nil {
+				if err := hypervisor.Terminate(ctx, v); err != nil {
 					fmt.Printf("Warning: %v\n", err)
 					v.State = vm.StateError
 					if saveErr := v.Save(paths.VMs); saveErr != nil {

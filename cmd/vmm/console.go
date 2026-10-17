@@ -7,7 +7,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
 	"github.com/raesene/baremetalvmm/internal/validate"
 	"github.com/raesene/baremetalvmm/internal/vm"
 	"github.com/spf13/cobra"
@@ -37,7 +36,7 @@ func consoleCmd() *cobra.Command {
 			}
 
 			logPath := fmt.Sprintf("%s/%s.log", paths.Logs, existingVM.Name)
-			consolePath := firecracker.ConsoleLogPath(logPath)
+			consolePath := vm.ConsoleLogPath(logPath)
 
 			if _, err := os.Stat(consolePath); err != nil {
 				return fmt.Errorf("no console log found for VM '%s' (has it been started?)", name)

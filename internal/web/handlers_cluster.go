@@ -13,7 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/raesene/baremetalvmm/internal/cluster"
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/image"
 	"github.com/raesene/baremetalvmm/internal/network"
 	"github.com/raesene/baremetalvmm/internal/sshkey"
@@ -346,8 +346,7 @@ func (s *Server) provisionClusterInBackground(clusterName, source string) {
 			return
 		}
 
-		fcClient := firecracker.NewClient()
-		fcClient.UpdateVMState(existingVM)
+		hypervisor.UpdateVMState(existingVM)
 		if existingVM.State == vm.StateRunning {
 			if vmName == cl.AdminVM {
 				adminIP = existingVM.IPAddress
@@ -464,7 +463,6 @@ func (s *Server) deleteCluster(w http.ResponseWriter, r *http.Request) {
 	release := s.sseBroker.Hold(kindCluster, name)
 	defer release()
 
-	fcClient := firecracker.NewClient()
 	netMgr := network.NewManager(s.cfg.BridgeName, s.cfg.Subnet, s.cfg.Gateway, s.cfg.HostInterface)
 	imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
 
@@ -476,11 +474,11 @@ func (s *Server) deleteCluster(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		fcClient.UpdateVMState(existingVM)
+		hypervisor.UpdateVMState(existingVM)
 		if existingVM.State == vm.StateRunning {
 			ctx := context.Background()
 			// Keep the VM record if the process survives, so it is not orphaned
-			if err := fcClient.Terminate(ctx, existingVM); err != nil {
+			if err := hypervisor.Terminate(ctx, existingVM); err != nil {
 				existingVM.State = vm.StateError
 				if saveErr := existingVM.Save(paths.VMs); saveErr != nil {
 					log.Printf("failed to save state for VM %s: %v", vmName, saveErr)
@@ -765,7 +763,6 @@ func (s *Server) handleAPIClusterDelete(w http.ResponseWriter, r *http.Request) 
 	release := s.sseBroker.Hold(kindCluster, name)
 	defer release()
 
-	fcClient := firecracker.NewClient()
 	netMgr := network.NewManager(s.cfg.BridgeName, s.cfg.Subnet, s.cfg.Gateway, s.cfg.HostInterface)
 	imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
 
@@ -776,11 +773,11 @@ func (s *Server) handleAPIClusterDelete(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		fcClient.UpdateVMState(existingVM)
+		hypervisor.UpdateVMState(existingVM)
 		if existingVM.State == vm.StateRunning {
 			ctx := context.Background()
 			// Keep the VM record if the process survives, so it is not orphaned
-			if err := fcClient.Terminate(ctx, existingVM); err != nil {
+			if err := hypervisor.Terminate(ctx, existingVM); err != nil {
 				existingVM.State = vm.StateError
 				if saveErr := existingVM.Save(paths.VMs); saveErr != nil {
 					log.Printf("failed to save state for VM %s: %v", vmName, saveErr)

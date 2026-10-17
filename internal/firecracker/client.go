@@ -22,18 +22,6 @@ const (
 	DefaultFirecrackerBin = "/usr/local/bin/firecracker"
 )
 
-// consoleLogPath derives the console log path from the VM log path.
-// e.g. /var/lib/vmm/logs/myvm.log -> /var/lib/vmm/logs/myvm-console.log
-func consoleLogPath(logPath string) string {
-	ext := filepath.Ext(logPath)
-	return logPath[:len(logPath)-len(ext)] + "-console" + ext
-}
-
-// ConsoleLogPath returns the path to the console log for a VM given its log path.
-func ConsoleLogPath(logPath string) string {
-	return consoleLogPath(logPath)
-}
-
 // Client wraps the Firecracker SDK for VM management
 type Client struct {
 	FirecrackerBin string
@@ -51,30 +39,6 @@ func NewClient() *Client {
 	}
 }
 
-// MountDrive represents an additional block device for host directory mounts
-type MountDrive struct {
-	ImagePath string
-	Tag       string
-	ReadOnly  bool
-}
-
-// VMConfig holds the configuration needed to start a Firecracker VM
-type VMConfig struct {
-	SocketPath  string
-	KernelPath  string
-	RootfsPath  string
-	CPUs        int
-	MemoryMB    int
-	TapDevice   string
-	MacAddress  string
-	KernelArgs  string
-	LogPath     string
-	IPAddress   string
-	Gateway     string
-	Subnet      string
-	MountDrives []MountDrive
-}
-
 // netmaskFromCIDR derives a dotted-decimal netmask from a CIDR string (e.g. "172.16.0.0/16" -> "255.255.0.0").
 func netmaskFromCIDR(cidr string) string {
 	_, ipnet, err := net.ParseCIDR(cidr)
@@ -88,17 +52,26 @@ func netmaskFromCIDR(cidr string) string {
 	return fmt.Sprintf("%d.%d.%d.%d", mask[0], mask[1], mask[2], mask[3])
 }
 
-// StartVM starts a Firecracker microVM with the given configuration
-func (c *Client) StartVM(ctx context.Context, cfg *VMConfig) (*sdk.Machine, error) {
+// Name identifies this backend in VM and snapshot records.
+func (c *Client) Name() string {
+	return "firecracker"
+}
+
+// Start boots a Firecracker microVM and returns the Firecracker process's
+// PID. The process isn't tied to any caller's context, so it outlives the
+// command or HTTP request that started it.
+func (c *Client) Start(cfg *vm.LaunchConfig) (int, error) {
+	ctx := context.Background()
+
 	// Ensure socket doesn't exist
 	os.Remove(cfg.SocketPath)
 
 	// Validate paths
 	if _, err := os.Stat(cfg.KernelPath); err != nil {
-		return nil, fmt.Errorf("kernel not found at %s: %w", cfg.KernelPath, err)
+		return 0, fmt.Errorf("kernel not found at %s: %w", cfg.KernelPath, err)
 	}
 	if _, err := os.Stat(cfg.RootfsPath); err != nil {
-		return nil, fmt.Errorf("rootfs not found at %s: %w", cfg.RootfsPath, err)
+		return 0, fmt.Errorf("rootfs not found at %s: %w", cfg.RootfsPath, err)
 	}
 
 	// Default kernel args for a basic Linux boot
@@ -165,7 +138,7 @@ func (c *Client) StartVM(ctx context.Context, cfg *VMConfig) (*sdk.Machine, erro
 		if path, err := exec.LookPath("firecracker"); err == nil {
 			fcBin = path
 		} else {
-			return nil, fmt.Errorf("firecracker binary not found at %s or in PATH", c.FirecrackerBin)
+			return 0, fmt.Errorf("firecracker binary not found at %s or in PATH", c.FirecrackerBin)
 		}
 	}
 
@@ -178,7 +151,7 @@ func (c *Client) StartVM(ctx context.Context, cfg *VMConfig) (*sdk.Machine, erro
 	if cfg.LogPath != "" {
 		logDir := filepath.Dir(cfg.LogPath)
 		if err := os.MkdirAll(logDir, 0700); err != nil {
-			return nil, fmt.Errorf("failed to create log directory: %w", err)
+			return 0, fmt.Errorf("failed to create log directory: %w", err)
 		}
 	}
 
@@ -188,10 +161,10 @@ func (c *Client) StartVM(ctx context.Context, cfg *VMConfig) (*sdk.Machine, erro
 		WithSocketPath(cfg.SocketPath)
 
 	if cfg.LogPath != "" {
-		consolePath := consoleLogPath(cfg.LogPath)
+		consolePath := vm.ConsoleLogPath(cfg.LogPath)
 		consoleFile, err := os.OpenFile(consolePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create console log file: %w", err)
+			return 0, fmt.Errorf("failed to create console log file: %w", err)
 		}
 		cmdBuilder = cmdBuilder.WithStdout(consoleFile).WithStderr(consoleFile)
 	}
@@ -203,15 +176,15 @@ func (c *Client) StartVM(ctx context.Context, cfg *VMConfig) (*sdk.Machine, erro
 	// Create the machine
 	machine, err := sdk.NewMachine(ctx, fcCfg, machineOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Firecracker machine: %w", err)
+		return 0, fmt.Errorf("failed to create Firecracker machine: %w", err)
 	}
 
 	// Start the machine
 	if err := machine.Start(ctx); err != nil {
-		return nil, fmt.Errorf("failed to start Firecracker machine: %w", err)
+		return 0, fmt.Errorf("failed to start Firecracker machine: %w", err)
 	}
 
-	return machine, nil
+	return pidOf(machine), nil
 }
 
 // Version returns the Firecracker binary version string (e.g. "v1.16.0"), or an
@@ -283,15 +256,15 @@ func (c *Client) CreateSnapshotFiles(ctx context.Context, socketPath, memPath, s
 // snapshot (memPath + statePath) and resumes the guest. The block devices and
 // TAP network device referenced by the snapshot state must already exist at the
 // same host paths / names they had when the snapshot was taken.
-func (c *Client) RestoreVM(ctx context.Context, socketPath, logPath, memPath, statePath string) (*sdk.Machine, error) {
+func (c *Client) RestoreVM(ctx context.Context, socketPath, logPath, memPath, statePath string) (int, error) {
 	// LoadSnapshot validation requires the socket to be absent and both
 	// snapshot files to exist.
 	os.Remove(socketPath)
 	if _, err := os.Stat(memPath); err != nil {
-		return nil, fmt.Errorf("snapshot memory file not found at %s: %w", memPath, err)
+		return 0, fmt.Errorf("snapshot memory file not found at %s: %w", memPath, err)
 	}
 	if _, err := os.Stat(statePath); err != nil {
-		return nil, fmt.Errorf("snapshot state file not found at %s: %w", statePath, err)
+		return 0, fmt.Errorf("snapshot state file not found at %s: %w", statePath, err)
 	}
 
 	fcBin := c.FirecrackerBin
@@ -299,7 +272,7 @@ func (c *Client) RestoreVM(ctx context.Context, socketPath, logPath, memPath, st
 		if path, err := exec.LookPath("firecracker"); err == nil {
 			fcBin = path
 		} else {
-			return nil, fmt.Errorf("firecracker binary not found at %s or in PATH", c.FirecrackerBin)
+			return 0, fmt.Errorf("firecracker binary not found at %s or in PATH", c.FirecrackerBin)
 		}
 	}
 
@@ -313,12 +286,12 @@ func (c *Client) RestoreVM(ctx context.Context, socketPath, logPath, memPath, st
 
 	if logPath != "" {
 		if err := os.MkdirAll(filepath.Dir(logPath), 0700); err != nil {
-			return nil, fmt.Errorf("failed to create log directory: %w", err)
+			return 0, fmt.Errorf("failed to create log directory: %w", err)
 		}
-		consolePath := consoleLogPath(logPath)
+		consolePath := vm.ConsoleLogPath(logPath)
 		consoleFile, err := os.OpenFile(consolePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create console log file: %w", err)
+			return 0, fmt.Errorf("failed to create console log file: %w", err)
 		}
 		cmdBuilder = cmdBuilder.WithStdout(consoleFile).WithStderr(consoleFile)
 	}
@@ -335,12 +308,12 @@ func (c *Client) RestoreVM(ctx context.Context, socketPath, logPath, memPath, st
 
 	machine, err := sdk.NewMachine(ctx, fcCfg, machineOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Firecracker machine: %w", err)
+		return 0, fmt.Errorf("failed to create Firecracker machine: %w", err)
 	}
 	if err := machine.Start(ctx); err != nil {
-		return nil, fmt.Errorf("failed to restore VM from snapshot: %w", err)
+		return 0, fmt.Errorf("failed to restore VM from snapshot: %w", err)
 	}
-	return machine, nil
+	return pidOf(machine), nil
 }
 
 // StopVM gracefully stops a running Firecracker VM
@@ -451,8 +424,8 @@ func (c *Client) IsRunning(socketPath string, pid int) bool {
 	return ResolvePID(socketPath, pid) > 0
 }
 
-// GetVMPID extracts the PID from the machine (if available)
-func (c *Client) GetVMPID(machine *sdk.Machine) int {
+// pidOf returns the Firecracker process's PID, or 0 if it isn't known.
+func pidOf(machine *sdk.Machine) int {
 	if machine == nil {
 		return 0
 	}

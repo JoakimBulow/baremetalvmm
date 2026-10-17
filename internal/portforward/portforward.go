@@ -185,7 +185,7 @@ func Clear(r Rules, v *vm.VM) error {
 
 // Add saves a new forward on v and, if v is running, installs it at once.
 // all is every VM on the host, for conflict checks; v must have its current
-// state (see firecracker.Client.UpdateVMState). It reports whether the
+// state (see hypervisor.UpdateVMState). It reports whether the
 // forward is live now. The caller saves v on success.
 func Add(r Rules, all []*vm.VM, v *vm.VM, pf vm.PortForward) (live bool, err error) {
 	if err := Validate(pf); err != nil {

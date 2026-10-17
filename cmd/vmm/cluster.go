@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/raesene/baremetalvmm/internal/cluster"
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/image"
 	"github.com/raesene/baremetalvmm/internal/lifecycle"
 	"github.com/raesene/baremetalvmm/internal/mount"
@@ -460,7 +460,6 @@ func clusterDeleteCmd() *cobra.Command {
 			fmt.Printf("Deleting cluster '%s'...\n", name)
 
 			// Delete all VMs
-			fcClient := firecracker.NewClient()
 			netMgr := network.NewManager(cfg.BridgeName, cfg.Subnet, cfg.Gateway, cfg.HostInterface)
 			imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
 
@@ -472,11 +471,11 @@ func clusterDeleteCmd() *cobra.Command {
 					continue
 				}
 
-				fcClient.UpdateVMState(existingVM)
+				hypervisor.UpdateVMState(existingVM)
 				if existingVM.State == vm.StateRunning {
 					fmt.Printf("  Stopping VM '%s'...\n", vmName)
 					ctx := context.Background()
-					if err := fcClient.Terminate(ctx, existingVM); err != nil {
+					if err := hypervisor.Terminate(ctx, existingVM); err != nil {
 						// Keep the VM's state file so the surviving process
 						// stays traceable instead of being orphaned.
 						fmt.Printf("  Warning: %v; keeping VM '%s'\n", err, vmName)
@@ -554,7 +553,6 @@ func clusterListCmd() *cobra.Command {
 			fmt.Fprintln(w, "NAME\tSTATE\tTYPE\tCNI\tVERSION\tNODES\tCONTROL PLANE IP\tCONTEXT")
 			for _, cl := range clusters {
 				// Update VM states
-				fcClient := firecracker.NewClient()
 				allRunning := true
 				for _, vmName := range cl.AllVMs() {
 					v, err := vm.Load(paths.VMs, vmName)
@@ -562,7 +560,7 @@ func clusterListCmd() *cobra.Command {
 						allRunning = false
 						continue
 					}
-					fcClient.UpdateVMState(v)
+					hypervisor.UpdateVMState(v)
 					if v.State != vm.StateRunning {
 						allRunning = false
 					}

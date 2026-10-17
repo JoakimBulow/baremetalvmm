@@ -1,6 +1,9 @@
 package vm
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -133,5 +136,27 @@ func TestList(t *testing.T) {
 	}
 	if len(vms) != 2 {
 		t.Errorf("expected 2 VMs, got %d", len(vms))
+	}
+}
+
+func TestConsoleLogPath(t *testing.T) {
+	if got := ConsoleLogPath("/var/lib/vmm/logs/myvm.log"); got != "/var/lib/vmm/logs/myvm-console.log" {
+		t.Errorf("ConsoleLogPath = %q", got)
+	}
+}
+
+func TestBackendOmittedForLegacyVMs(t *testing.T) {
+	dir := t.TempDir()
+	v := NewVM("legacy")
+	if err := v.Save(dir); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "legacy.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Older vmm binaries must still read VMs written by this one.
+	if strings.Contains(string(data), `"backend"`) {
+		t.Errorf("default VM JSON contains a backend key:\n%s", data)
 	}
 }

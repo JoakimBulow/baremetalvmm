@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/sshkey"
 	"github.com/raesene/baremetalvmm/internal/validate"
 	"github.com/raesene/baremetalvmm/internal/vm"
@@ -64,8 +64,7 @@ func loadRunningVM(name string) (*vm.VM, error) {
 	}
 
 	// Update state
-	fcClient := firecracker.NewClient()
-	fcClient.UpdateVMState(existingVM)
+	hypervisor.UpdateVMState(existingVM)
 
 	if existingVM.State != vm.StateRunning {
 		return nil, fmt.Errorf("VM '%s' is not running", name)

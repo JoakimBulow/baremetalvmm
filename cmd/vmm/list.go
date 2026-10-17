@@ -5,7 +5,7 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/vm"
 	"github.com/spf13/cobra"
 )
@@ -31,9 +31,8 @@ func listCmd() *cobra.Command {
 			}
 
 			// Update state for each VM
-			fcClient := firecracker.NewClient()
 			for _, v := range vms {
-				fcClient.UpdateVMState(v)
+				hypervisor.UpdateVMState(v)
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)

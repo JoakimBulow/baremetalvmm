@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/lifecycle"
 	"github.com/raesene/baremetalvmm/internal/validate"
 	"github.com/raesene/baremetalvmm/internal/vm"
@@ -29,8 +29,7 @@ func startCmd() *cobra.Command {
 			}
 
 			// Update state
-			fcClient := firecracker.NewClient()
-			fcClient.UpdateVMState(existingVM)
+			hypervisor.UpdateVMState(existingVM)
 
 			if existingVM.State == vm.StateRunning {
 				return fmt.Errorf("VM '%s' is already running", name)

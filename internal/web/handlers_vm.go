@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/image"
 	"github.com/raesene/baremetalvmm/internal/lifecycle"
 	"github.com/raesene/baremetalvmm/internal/network"
@@ -32,9 +32,8 @@ func (s *Server) handleVMList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fcClient := firecracker.NewClient()
 	for _, v := range vms {
-		fcClient.UpdateVMState(v)
+		hypervisor.UpdateVMState(v)
 	}
 
 	s.renderPage(w, r, "vms.html", "vms", map[string]interface{}{
@@ -252,7 +251,7 @@ func (s *Server) handleVMDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	firecracker.NewClient().UpdateVMState(v)
+	hypervisor.UpdateVMState(v)
 	s.renderVMDetail(w, r, v, nil)
 }
 
@@ -296,8 +295,7 @@ func (s *Server) handleVMStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fcClient := firecracker.NewClient()
-	fcClient.UpdateVMState(existingVM)
+	hypervisor.UpdateVMState(existingVM)
 
 	if existingVM.State == vm.StateRunning {
 		httpError(w, r, "VM is already running", http.StatusConflict)
@@ -330,8 +328,7 @@ func (s *Server) handleVMStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fcClient := firecracker.NewClient()
-	fcClient.UpdateVMState(existingVM)
+	hypervisor.UpdateVMState(existingVM)
 
 	if existingVM.State != vm.StateRunning {
 		httpError(w, r, "VM is not running", http.StatusConflict)
@@ -347,7 +344,7 @@ func (s *Server) handleVMStop(w http.ResponseWriter, r *http.Request) {
 	s.sseBroker.Record(kindVM, name, string(vm.StateStopping), source, "")
 
 	ctx := context.Background()
-	if err := fcClient.Terminate(ctx, existingVM); err != nil {
+	if err := hypervisor.Terminate(ctx, existingVM); err != nil {
 		existingVM.State = vm.StateError
 		if saveErr := existingVM.Save(paths.VMs); saveErr != nil {
 			log.Printf("failed to save state for VM %s: %v", name, saveErr)
@@ -400,8 +397,7 @@ func (s *Server) deleteVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fcClient := firecracker.NewClient()
-	fcClient.UpdateVMState(existingVM)
+	hypervisor.UpdateVMState(existingVM)
 
 	source := requestSource(r)
 	release := s.sseBroker.Hold(kindVM, name)
@@ -410,7 +406,7 @@ func (s *Server) deleteVM(w http.ResponseWriter, r *http.Request) {
 	if existingVM.State == vm.StateRunning {
 		ctx := context.Background()
 		// Never remove the VM record while its process survives
-		if err := fcClient.Terminate(ctx, existingVM); err != nil {
+		if err := hypervisor.Terminate(ctx, existingVM); err != nil {
 			existingVM.State = vm.StateError
 			if saveErr := existingVM.Save(paths.VMs); saveErr != nil {
 				log.Printf("failed to save state for VM %s: %v", name, saveErr)
@@ -481,9 +477,8 @@ func (s *Server) handleAPIVMList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fcClient := firecracker.NewClient()
 	for _, v := range vms {
-		fcClient.UpdateVMState(v)
+		hypervisor.UpdateVMState(v)
 	}
 
 	jsonResponse(w, vms)
@@ -503,8 +498,7 @@ func (s *Server) handleAPIVMDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fcClient := firecracker.NewClient()
-	fcClient.UpdateVMState(v)
+	hypervisor.UpdateVMState(v)
 
 	jsonResponse(w, v)
 }
@@ -626,8 +620,7 @@ func (s *Server) handleAPIVMDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fcClient := firecracker.NewClient()
-	fcClient.UpdateVMState(existingVM)
+	hypervisor.UpdateVMState(existingVM)
 
 	source := requestSource(r)
 	release := s.sseBroker.Hold(kindVM, name)
@@ -636,7 +629,7 @@ func (s *Server) handleAPIVMDelete(w http.ResponseWriter, r *http.Request) {
 	if existingVM.State == vm.StateRunning {
 		ctx := context.Background()
 		// Never remove the VM record while its process survives
-		if err := fcClient.Terminate(ctx, existingVM); err != nil {
+		if err := hypervisor.Terminate(ctx, existingVM); err != nil {
 			existingVM.State = vm.StateError
 			if saveErr := existingVM.Save(paths.VMs); saveErr != nil {
 				log.Printf("failed to save state for VM %s: %v", name, saveErr)
