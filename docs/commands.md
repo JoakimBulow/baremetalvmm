@@ -28,7 +28,12 @@ Flags:
   --kernel string    Name of kernel to use (from 'vmm kernel import' or 'vmm kernel build')
   --mount string     Mount host directory in VM (format: /host/path:tag[:ro|rw], can be repeated)
   --no-autostart     Don't start this VM at boot
+  --backend string   Hypervisor: firecracker (default) or cloud-hypervisor
+  --nested           Let the VM run its own VMs (uses cloud-hypervisor and the
+                     nested-kernel kernel unless --kernel is given)
 ```
+
+Nested VMs need Cloud Hypervisor, nested KVM on the host and the `nested-kernel` kernel. See [Nested Virtualization](nested-virtualization.md).
 
 Example with all options:
 ```bash
@@ -139,7 +144,7 @@ Each mount is a copy of the host directory, taken into an ext4 image when the VM
 | `vmm kernel list --remote` | Show kernels available on GitHub releases |
 | `vmm kernel pull <name>` | Download a specific kernel from GitHub releases |
 | `vmm kernel import <path> --name <name>` | Import a custom kernel binary |
-| `vmm kernel build --version <ver> --name <name>` | Build a kernel from source |
+| `vmm kernel build --version <ver> --name <name> [--profile P]` | Build a kernel from source. Profiles: `default`, `k8s`, `nested`, `security`, `security-kasan` |
 | `vmm kernel delete <name>` | Delete a custom kernel |
 
 ## Clusters
@@ -162,9 +167,10 @@ sudo vmm upgrade -y                 # ...without asking
 sudo vmm upgrade --version 0.14.0   # Install a specific release (--force to downgrade or reinstall)
 sudo vmm upgrade --rollback         # Restore the binaries saved by the last upgrade
 sudo vmm upgrade --update-units     # Also overwrite installed systemd units that differ from the release's
+sudo vmm upgrade --with-cloud-hypervisor   # Also install Cloud Hypervisor, for nested VMs
 ```
 
-Running VMs are not stopped. `vmm-web.service` is restarted if it is running. Firecracker is upgraded when the release requires a newer version; running VMs keep their current Firecracker until they are restarted.
+Running VMs are not stopped. `vmm-web.service` is restarted if it is running. Firecracker is upgraded when the release requires a newer version; running VMs keep their current Firecracker until they are restarted. Cloud Hypervisor is upgraded the same way if it is installed, and verified against the SHA256 the release pins.
 
 ## Configuration
 

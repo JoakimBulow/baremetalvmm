@@ -55,7 +55,11 @@ go test ./...
 │   ├── config/               # Configuration management
 │   ├── vm/                   # VM struct and persistence
 │   ├── cluster/              # Kubernetes cluster management
-│   ├── firecracker/          # Firecracker SDK wrapper
+│   ├── hypervisor/           # VM backend selection (Backend interface)
+│   ├── firecracker/          # Firecracker backend (default)
+│   ├── cloudhypervisor/      # Cloud Hypervisor backend (nested VMs)
+│   ├── vmproc/               # Hypervisor process matching and stop logic
+│   ├── lifecycle/            # VM start, shared by CLI, autostart, clusters and web
 │   ├── network/              # TAP/bridge networking
 │   ├── image/                # Kernel/rootfs management
 │   ├── mount/                # Host directory mount management

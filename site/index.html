@@ -137,6 +137,21 @@ root@vmm-guest:~# <span class="caret"></span></code></pre>
                     <span class="cmdline"><span class="prompt">$</span><span><span class="tok-cmd">sudo vmm cluster create</span> <span class="tok-data">ocp</span> <span class="tok-flag">--type openshift</span></span></span>
                 </article>
 
+
+                <article class="panel feature is-wide">
+                    <span class="hw">compute / cloud hypervisor</span>
+                    <h3>Nested virtualization</h3>
+                    <p>Need a VM that runs VMs of its own, for Kata, KubeVirt, a hypervisor lab or vmm itself? <code class="mono">--nested</code> runs it under Cloud Hypervisor with VT-x/AMD-V exposed, so the guest gets <code class="mono">/dev/kvm</code>. It boots the same images, joins the same bridge and works with SSH, mounts and port forwards, right alongside your Firecracker VMs.</p>
+                    <span class="cmdline"><span class="prompt">$</span><span><span class="tok-cmd">sudo vmm create</span> <span class="tok-data">lab</span> <span class="tok-flag">--nested --cpus 2 --memory 2048</span></span></span>
+                </article>
+
+                <article class="panel feature">
+                    <span class="hw">kernels / build profiles</span>
+                    <h3>Custom and research kernels</h3>
+                    <p>Pre-built kernels for general use, nested VMs (KVM), Kubernetes (BTF, eBPF, tracing), and security research across the 5.10–6.18 LTS series, including KASAN builds. You can also build your own with a profile.</p>
+                    <span class="cmdline"><span class="prompt">$</span><span><span class="tok-cmd">sudo vmm kernel pull</span> <span class="tok-data">kasan-kernel</span></span></span>
+                </article>
+
                 <article class="panel feature">
                     <span class="hw">fs / block devices</span>
                     <h3>Host directory mounts</h3>
@@ -144,17 +159,10 @@ root@vmm-guest:~# <span class="caret"></span></code></pre>
                     <span class="cmdline"><span class="prompt">$</span><span><span class="tok-cmd">sudo vmm create</span> <span class="tok-data">myvm</span> <span class="tok-flag">--mount ~/code:code:ro</span></span></span>
                 </article>
 
-                <article class="panel feature">
-                    <span class="hw">kernels / build profiles</span>
-                    <h3>Custom and research kernels</h3>
-                    <p>Pre-built kernels for general use, Kubernetes (BTF, eBPF, tracing), and security research across the 5.10–6.18 LTS series, including KASAN builds. You can also build your own with a profile.</p>
-                    <span class="cmdline"><span class="prompt">$</span><span><span class="tok-cmd">sudo vmm kernel pull</span> <span class="tok-data">kasan-kernel</span></span></span>
-                </article>
-
-                <article class="panel feature">
+                <article class="panel feature is-wide">
                     <span class="hw">ui / vmm-web</span>
                     <h3>Web console &amp; JSON API</h3>
-                    <p>An optional browser console for VMs, clusters and images, with live state updates, an in-browser SSH terminal and a Bearer-token REST API.</p>
+                    <p>An optional browser console for VMs, clusters and images, with live state updates, an in-browser SSH terminal, a file browser for copying files in and out of VMs, a port forwards page and a Bearer-token REST API.</p>
                     <span class="cmdline"><span class="prompt">$</span><span><span class="tok-flag">VMM_WEB_PASSWORD=…</span> <span class="tok-cmd">sudo -E vmm-web</span></span></span>
                 </article>
 
@@ -163,7 +171,7 @@ root@vmm-guest:~# <span class="caret"></span></code></pre>
                         <div>
                             <span class="hw">lifecycle / vmm upgrade</span>
                             <h3>Upgrades without downtime</h3>
-                            <p>One command moves the host to the latest release. <code class="mono">vmm upgrade</code> checks the download against the release checksums, swaps <code class="mono">vmm</code> and <code class="mono">vmm-web</code> in place and upgrades Firecracker when a release needs it. It then restarts only the web console. Running VMs keep running, the previous binaries are kept for <code class="mono">--rollback</code>, and the web console tells you when a new version is out.</p>
+                            <p>One command moves the host to the latest release. <code class="mono">vmm upgrade</code> checks the download against the release checksums, swaps <code class="mono">vmm</code> and <code class="mono">vmm-web</code> in place and upgrades Firecracker (and Cloud Hypervisor, if you use it) when a release needs it. It then restarts only the web console. Running VMs keep running, the previous binaries are kept for <code class="mono">--rollback</code>, and the web console tells you when a new version is out.</p>
                         </div>
 <pre class="code"><code><span class="prompt">$ </span><span class="tok-cmd">vmm upgrade</span> <span class="tok-flag">--check</span>
 <span class="tok-flag">installed: 0.14.0</span>
@@ -230,7 +238,7 @@ root@vmm-guest:~# <span class="caret"></span></code></pre>
             <div class="section-head">
                 <div class="eyebrow"><span class="idx">03</span> How it works</div>
                 <h2>Plain Linux building blocks, stitched together.</h2>
-                <p>No daemon to babysit. vmm uses Firecracker, TAP devices, a bridge and iptables directly, and keeps its state in JSON files you can read.</p>
+                <p>No daemon to babysit. vmm uses Firecracker (or Cloud Hypervisor for nested VMs), TAP devices, a bridge and iptables directly, and keeps its state in JSON files you can read.</p>
             </div>
 
             <div class="arch">
@@ -247,17 +255,20 @@ root@vmm-guest:~# <span class="caret"></span></code></pre>
                         <div class="layer"><span class="name">cluster</span><span class="sub">kubeadm · microshift</span></div>
                     </div>
                     <div class="arrow">▼</div>
-                    <div class="layer is-sel"><span class="name">firecracker</span><span class="sub">one process per microVM · KVM</span></div>
+                    <div class="layer-row">
+                        <div class="layer is-sel"><span class="name">firecracker</span><span class="sub">one process per microVM · KVM</span></div>
+                        <div class="layer is-sel"><span class="name">cloud-hypervisor</span><span class="sub">nested VMs · guest gets /dev/kvm</span></div>
+                    </div>
                     <div class="arrow">▼</div>
                     <div class="layer is-data"><span class="name">vmm-br0 · 172.16.0.1/16</span><span class="sub">bridge → iptables MASQUERADE / DNAT → host interface</span></div>
                 </div>
 
                 <ul class="facts">
                     <li><span class="k">State</span><span>VM and cluster configs are JSON files in <code class="mono data">/var/lib/vmm</code>, written atomically. Change the location with <code class="mono">vmm config set data_dir</code>.</span></li>
-                    <li><span class="k">Isolation</span><span>Every VM gets its own guest kernel inside a KVM-backed Firecracker process. It is much stronger isolation than a shared-kernel container.</span></li>
-                    <li><span class="k">Lifecycle</span><span>Stop escalates from Ctrl+Alt+Del to SIGTERM to SIGKILL and waits for the process to exit. Failed starts roll back their TAP device, IP and socket.</span></li>
+                    <li><span class="k">Isolation</span><span>Every VM gets its own guest kernel inside a KVM-backed Firecracker (or Cloud Hypervisor) process. It is much stronger isolation than a shared-kernel container.</span></li>
+                    <li><span class="k">Lifecycle</span><span>Stop escalates from a guest shutdown request (Ctrl+Alt+Del, or the ACPI power button under Cloud Hypervisor) to SIGTERM to SIGKILL and waits for the process to exit. Failed starts roll back their TAP device, IP and socket.</span></li>
                     <li><span class="k">Networking</span><span>VMs share a bridge with NAT out through the host interface. Only the ports you forward are exposed beyond the host. Forwards are DNAT rules matched to the host's own addresses, so they can be changed on running VMs and never redirect a VM's outbound traffic.</span></li>
-                    <li><span class="k">Upgrades</span><span><code class="mono">vmm upgrade</code> verifies a release against its checksums, then swaps binaries by atomic rename, keeping <code class="mono">.prev</code> copies. Firecracker processes that are already running are untouched, so VMs keep running through an upgrade.</span></li>
+                    <li><span class="k">Upgrades</span><span><code class="mono">vmm upgrade</code> verifies a release against its checksums, then swaps binaries by atomic rename, keeping <code class="mono">.prev</code> copies. Firecracker and Cloud Hypervisor processes that are already running are untouched, so VMs keep running through an upgrade.</span></li>
                     <li><span class="k">Downloads</span><span>Kernels and rootfs images come from GitHub releases and are checked against SHA256 checksums when they are published.</span></li>
                 </ul>
             </div>
@@ -291,6 +302,7 @@ root@vmm-guest:~# <span class="caret"></span></code></pre>
                         <li><span>Installs them to <code>/usr/local/bin</code>, with helper scripts in <code>/usr/local/share/vmm</code></span></li>
                         <li><span>Installs Firecracker v1.16.0 after verifying its SHA256</span></li>
                         <li><span>Fetches the default, Kubernetes and security kernels, plus an Ubuntu 24.04 rootfs</span></li>
+                        <li><span>With <code>--with-cloud-hypervisor</code>: installs Cloud Hypervisor, checked against a pinned SHA256, and the nested kernel for nested VMs</span></li>
                         <li><span>With <code>--with-services</code>: enables VM auto-start and starts the web console with a generated password</span></li>
                     </ul>
                 </aside>
@@ -303,7 +315,7 @@ root@vmm-guest:~# <span class="caret"></span></code></pre>
 <pre class="code"><code><span class="prompt">$ </span><span class="tok-cmd">curl</span> <span class="tok-flag">-fsSL</span> <span class="tok-data">https://raesene.github.io/baremetalvmm/install.sh</span> \
     <span class="tok-flag">|</span> <span class="tok-cmd">sudo bash</span></code></pre>
                         </div>
-                        <p class="note">Options go after <code>bash -s --</code>: <code>--with-services</code>, <code>--version 0.14.0</code>, <code>--no-images</code>. Re-running the installer is safe. You can <a class="cmd" href="install.sh">read the script</a> first.</p>
+                        <p class="note">Options go after <code>bash -s --</code>: <code>--with-services</code>, <code>--with-cloud-hypervisor</code>, <code>--version 0.14.0</code>, <code>--no-images</code>. Re-running the installer is safe. You can <a class="cmd" href="install.sh">read the script</a> first.</p>
                     </li>
 
                     <li class="step">
@@ -368,6 +380,7 @@ root@vmm-guest:~# <span class="caret"></span></code></pre>
                         <tr><td><a href="https://github.com/raesene/baremetalvmm/blob/main/docs/kubernetes.md">Kubernetes clusters</a></td><td class="desc">kubeadm with Cilium or Calico, workers, admin workstation</td><td>docs/kubernetes.md</td></tr>
                         <tr><td><a href="https://github.com/raesene/baremetalvmm/blob/main/docs/openshift.md">OpenShift clusters</a></td><td class="desc">Single-node MicroShift on OKD payload images</td><td>docs/openshift.md</td></tr>
                         <tr><td><a href="https://github.com/raesene/baremetalvmm/blob/main/docs/web-ui.md">Web UI</a></td><td class="desc">Dashboard, web terminal and JSON API</td><td>docs/web-ui.md</td></tr>
+                        <tr><td><a href="https://github.com/raesene/baremetalvmm/blob/main/docs/nested-virtualization.md">Nested virtualization</a></td><td class="desc">VMs that run their own VMs, on the Cloud Hypervisor backend</td><td>docs/nested-virtualization.md</td></tr>
                         <tr><td><a href="https://github.com/raesene/baremetalvmm/blob/main/docs/security-testing.md">Security testing</a></td><td class="desc">Security and KASAN kernels for vulnerability research</td><td>docs/security-testing.md</td></tr>
                         <tr><td><a href="https://github.com/raesene/baremetalvmm/blob/main/docs/development.md">Development</a></td><td class="desc">Building from source, project layout, systemd services</td><td>docs/development.md</td></tr>
                         <tr><td><a href="https://github.com/raesene/baremetalvmm/blob/main/docs/troubleshooting.md">Troubleshooting</a></td><td class="desc">Common problems and how to debug them</td><td>docs/troubleshooting.md</td></tr>
@@ -382,7 +395,7 @@ root@vmm-guest:~# <span class="caret"></span></code></pre>
     <div class="wrap">
         <div>
             <a href="#top" class="brand"><span class="brand-glyph">&gt;_</span>vmm</a>
-            <p class="mt-3">MIT licensed. Built on <a href="https://github.com/firecracker-microvm/firecracker">Firecracker</a>, <a href="https://github.com/firecracker-microvm/firecracker-go-sdk">firecracker-go-sdk</a> and <a href="https://github.com/spf13/cobra">Cobra</a>. Visual design uses the Caret Ledger language from <a href="https://katagami.ai">Katagami</a>.</p>
+            <p class="mt-3">MIT licensed. Built on <a href="https://github.com/firecracker-microvm/firecracker">Firecracker</a>, <a href="https://github.com/cloud-hypervisor/cloud-hypervisor">Cloud Hypervisor</a>, <a href="https://github.com/firecracker-microvm/firecracker-go-sdk">firecracker-go-sdk</a> and <a href="https://github.com/spf13/cobra">Cobra</a>. Visual design uses the Caret Ledger language from <a href="https://katagami.ai">Katagami</a>.</p>
         </div>
         <div class="footer-links">
             <a href="https://github.com/raesene/baremetalvmm">github</a>

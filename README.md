@@ -2,7 +2,7 @@
 
 **Project site:** https://raesene.github.io/baremetalvmm/
 
-The goal of the project is to allow for small development VMs to be spun up based on [firecracker](https://github.com/firecracker-microvm/firecracker), so they're lightweight. It can build VM images from a Docker image, allowing for custom VMs.
+The goal of the project is to allow for small development VMs to be spun up based on [firecracker](https://github.com/firecracker-microvm/firecracker), so they're lightweight. It can build VM images from a Docker image, allowing for custom VMs. VMs that need to run VMs of their own can use [Cloud Hypervisor](https://github.com/cloud-hypervisor/cloud-hypervisor) instead (see [Nested VMs](#nested-vms)).
 
 The goal of the project is to be useful in cases where you want something like Docker, but want some more isolation that Docker provides, or you want to do lower level tasks in the VM that don't suit Docker well. N.B we're not there yet!
 
@@ -28,6 +28,9 @@ curl -fsSL https://raesene.github.io/baremetalvmm/install.sh | sudo bash
 
 # Or also install and start the systemd services (VM auto-start + web console)
 curl -fsSL https://raesene.github.io/baremetalvmm/install.sh | sudo bash -s -- --with-services
+
+# Or also install Cloud Hypervisor, for nested VMs
+curl -fsSL https://raesene.github.io/baremetalvmm/install.sh | sudo bash -s -- --with-cloud-hypervisor
 ```
 
 The installer:
@@ -35,6 +38,7 @@ The installer:
 - Installs the binaries to `/usr/local/bin` and helper scripts to `/usr/local/share/vmm`
 - Installs Firecracker v1.16.0 (verified against its published SHA256)
 - Downloads the default kernel, Kubernetes and security kernels, and an Ubuntu 24.04 rootfs
+- With `--with-cloud-hypervisor`: installs Cloud Hypervisor (verified against a SHA256 pinned in the installer) and the nested kernel. Once installed, it's kept up to date
 - With `--with-services`: installs `vmm.service` and `vmm-web.service`, generates a random web console password in `/etc/vmm-web/environment` and starts the console on `127.0.0.1:8080`
 
 Other options: `--version X` to pin a release, `--no-images` to skip image downloads, and `--build-from-source` (run from a checkout as `sudo ./scripts/install.sh --build-from-source`). Re-running the installer is safe.
@@ -45,6 +49,7 @@ Other options: `--version X` to pin a release, `--no-images` to skip image downl
 vmm upgrade --check      # is a newer release available?
 sudo vmm upgrade         # upgrade vmm, vmm-web (and Firecracker if the release needs it)
 sudo vmm upgrade --rollback   # restore the previous binaries
+sudo vmm upgrade --with-cloud-hypervisor   # also install Cloud Hypervisor, for nested VMs
 ```
 
 Upgrades are verified against the release checksums and swap the binaries in place, so **you don't need to stop anything first**: running VMs keep running and only `vmm-web.service` is restarted. Don't stop `vmm.service` to upgrade, because stopping it stops every running VM. The web console shows when a new release is available. (`vmm upgrade` is available from v0.14.0; to upgrade an older install, re-run the installer.)
@@ -99,6 +104,19 @@ sudo vmm delete myvm
 
 By default VMs are only reachable from the local machine. Use `vmm port-forward` to expose them externally.
 
+### Nested VMs
+
+A nested VM has `/dev/kvm`, so it can run VMs of its own (Firecracker, QEMU, Kata, KubeVirt or vmm itself). Firecracker can't expose virtualization to guests, so nested VMs run under Cloud Hypervisor, side by side with your Firecracker VMs. You need nested KVM enabled on the host, Cloud Hypervisor (`--with-cloud-hypervisor` above) and the nested kernel:
+
+```bash
+sudo vmm kernel pull nested-kernel     # the installer does this with --with-cloud-hypervisor
+sudo vmm create lab --nested --cpus 2 --memory 2048
+sudo vmm start lab
+vmm ssh lab -- ls -l /dev/kvm
+```
+
+See [Nested Virtualization](docs/nested-virtualization.md) for setup, how it works and its limitations (no memory snapshots yet).
+
 ## Documentation
 
 | Guide | Description |
@@ -110,6 +128,7 @@ By default VMs are only reachable from the local machine. Use `vmm port-forward`
 | [Kubernetes Clusters](docs/kubernetes.md) | Creating and managing Kubernetes clusters with kubeadm + Cilium |
 | [OpenShift Clusters](docs/openshift.md) | Single-node OpenShift-derived clusters via MicroShift |
 | [Web UI](docs/web-ui.md) | Browser-based dashboard, web terminal, and JSON API |
+| [Nested Virtualization](docs/nested-virtualization.md) | VMs that run their own VMs, using the Cloud Hypervisor backend |
 | [Security Testing](docs/security-testing.md) | Security kernel for vulnerability research and exploit testing |
 | [Development](docs/development.md) | Building from source, project structure, systemd services |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and debugging |
@@ -120,6 +139,7 @@ By default VMs are only reachable from the local machine. Use `vmm port-forward`
 2. **Root required** - VM start/stop and networking require root privileges
 3. **No GPU passthrough** - Firecracker limitation
 4. **No live migration** - VMs must be stopped to move
+5. **Nested VMs** - need nested KVM on an x86_64 host, and can't take memory snapshots yet
 
 ## License
 
@@ -129,4 +149,5 @@ MIT License - see LICENSE file for details.
 
 - [Firecracker](https://github.com/firecracker-microvm/firecracker) - The microVM engine
 - [firecracker-go-sdk](https://github.com/firecracker-microvm/firecracker-go-sdk) - Go SDK for Firecracker
+- [Cloud Hypervisor](https://github.com/cloud-hypervisor/cloud-hypervisor) - The backend for nested VMs
 - [Cobra](https://github.com/spf13/cobra) - CLI framework

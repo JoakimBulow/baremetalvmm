@@ -4,12 +4,12 @@
 
 ```bash
 cat /var/lib/vmm/vms/<name>.json          # VM state
-cat /var/lib/vmm/logs/<name>.log          # Firecracker logs
+cat /var/lib/vmm/logs/<name>.log          # Firecracker or Cloud Hypervisor logs
 sudo vmm console <name> --full            # Serial console output (kernel boot, panics)
 sudo vmm console <name>                   # Tail + follow console output live
 ip link show vmm-br0                       # Bridge
 sudo iptables -t nat -L -n -v             # NAT rules
-ps aux | grep firecracker                  # Processes
+ps aux | grep -E 'firecracker|cloud-hypervisor'   # Processes
 vmm ssh myvm -- 'getent hosts google.com'  # DNS from VM
 ```
 

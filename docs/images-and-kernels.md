@@ -24,6 +24,7 @@ Root filesystems:
 | Kubernetes clusters | `k8s-kernel` | `k8s-<version>` (auto-detected) | `sudo vmm cluster create mycluster` |
 | Security/vuln testing | `security-kernel` | `rootfs` (default) or `k8s-<version>` | `sudo vmm create testvm --kernel security-kernel` |
 | Memory bug detection | `kasan-kernel` | `rootfs` (default) | `sudo vmm create testvm --kernel kasan-kernel --memory 1024` |
+| Nested VMs (VMs inside VMs) | `nested-kernel` (auto-selected) | `rootfs` (default) | `sudo vmm create lab --nested` |
 
 ### Naming Convention
 
@@ -35,6 +36,7 @@ Kernels and rootfs images follow a prefix-based naming convention so that `vmm i
 | `k8s-` | Kubernetes/Cilium (Linux 6.6 LTS, BPF JIT, VXLAN, modules) | Kubernetes (kubeadm/containerd pre-installed) |
 | `security-` | Security testing (Linux 6.12 LTS, broad module coverage) | *(not yet used)* |
 | `kasan-` | KASAN security kernel (memory sanitizer + broad modules) | *(not yet used)* |
+| `nested-` | Nested virtualization (Linux 6.1 LTS, KVM, for Cloud Hypervisor) | *(not yet used)* |
 | `debug-` | Debug kernel (extra logging and debug options) | *(not yet used)* |
 | `minimal-` | Minimal kernel (reduced feature set) | Minimal image (reduced package set) |
 
@@ -182,6 +184,12 @@ VMM includes a build script that compiles Firecracker-compatible kernels from so
 sudo vmm kernel build --version 6.1 --name kernel-6.1
 
 # Supported versions: 5.10, 6.1, 6.6, 6.12
+```
+
+Choose a profile with `--profile`. The `nested` profile adds KVM, vhost and the ACPI button driver to the default kernel, for [nested VMs](nested-virtualization.md):
+
+```bash
+sudo vmm kernel build --version 6.1 --name nested-kernel --profile nested
 ```
 
 For the security testing profile with broad subsystem coverage, or the KASAN profile for memory corruption detection, use the build script directly:
