@@ -11,6 +11,7 @@ import (
 	"github.com/raesene/baremetalvmm/internal/cluster"
 	"github.com/raesene/baremetalvmm/internal/firecracker"
 	"github.com/raesene/baremetalvmm/internal/image"
+	"github.com/raesene/baremetalvmm/internal/lifecycle"
 	"github.com/raesene/baremetalvmm/internal/mount"
 	"github.com/raesene/baremetalvmm/internal/network"
 	"github.com/raesene/baremetalvmm/internal/sshkey"
@@ -420,91 +421,15 @@ func clusterCreateCmd() *cobra.Command {
 }
 
 func startClusterVM(vmName string) (string, error) {
-	paths := cfg.GetPaths()
-
-	existingVM, err := vm.Load(paths.VMs, vmName)
+	existingVM, err := vm.Load(cfg.GetPaths().VMs, vmName)
 	if err != nil {
 		return "", fmt.Errorf("VM '%s' not found", vmName)
 	}
-
-	imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
-	if err := imgMgr.EnsureDefaultImages(); err != nil {
-		return "", fmt.Errorf("failed to ensure images: %w", err)
+	if err := lifecycle.Start(cfg, existingVM, lifecycle.Options{
+		Warn: func(msg string) { fmt.Printf("  Warning: %s\n", msg) },
+	}); err != nil {
+		return "", err
 	}
-
-	vmRootfs, err := imgMgr.CreateVMRootfs(vmName, paths.VMs, existingVM.DiskSizeMB, existingVM.Image)
-	if err != nil {
-		return "", fmt.Errorf("failed to create VM rootfs: %w", err)
-	}
-	existingVM.RootfsPath = vmRootfs
-	existingVM.KernelPath = imgMgr.GetKernelPath(existingVM.Kernel)
-
-	if err := sshkey.EnsureKeyPair(paths.SSH); err != nil {
-		return "", fmt.Errorf("failed to ensure vmm SSH key: %w", err)
-	}
-	authorizedKeys, err := sshkey.BuildAuthorizedKeys(paths.SSH, existingVM.SSHPublicKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to build authorized keys: %w", err)
-	}
-	if err := image.InjectSSHKey(existingVM.RootfsPath, authorizedKeys); err != nil {
-		return "", fmt.Errorf("failed to inject SSH key: %w", err)
-	}
-
-	if err := image.InjectDNSConfig(existingVM.RootfsPath, existingVM.DNSServers); err != nil {
-		return "", fmt.Errorf("failed to inject DNS config: %w", err)
-	}
-
-	netMgr := network.NewManager(cfg.BridgeName, cfg.Subnet, cfg.Gateway, cfg.HostInterface)
-	if err := netMgr.EnsureBridge(); err != nil {
-		return "", fmt.Errorf("failed to setup bridge: %w", err)
-	}
-
-	if !netMgr.TapExists(existingVM.TapDevice) {
-		if err := netMgr.CreateTap(existingVM.TapDevice); err != nil {
-			return "", fmt.Errorf("failed to create TAP device: %w", err)
-		}
-	}
-
-	// Reuse existing IP if the VM already has one, otherwise allocate
-	if existingVM.IPAddress == "" {
-		ip, err := netMgr.AllocateIP(usedVMIPs(paths.VMs))
-		if err != nil {
-			return "", fmt.Errorf("failed to allocate IP: %w", err)
-		}
-		existingVM.IPAddress = ip
-	}
-
-	existingVM.State = vm.StateStarting
-	existingVM.Save(paths.VMs)
-
-	ctx := context.Background()
-	fcClient := firecracker.NewClient()
-	vmCfg := &firecracker.VMConfig{
-		SocketPath: existingVM.SocketPath,
-		KernelPath: existingVM.KernelPath,
-		RootfsPath: existingVM.RootfsPath,
-		CPUs:       existingVM.CPUs,
-		MemoryMB:   existingVM.MemoryMB,
-		TapDevice:  existingVM.TapDevice,
-		MacAddress: existingVM.MacAddress,
-		LogPath:    fmt.Sprintf("%s/%s.log", paths.Logs, vmName),
-		IPAddress:  existingVM.IPAddress,
-		Gateway:    cfg.Gateway,
-		Subnet:     cfg.Subnet,
-	}
-
-	machine, err := fcClient.StartVM(ctx, vmCfg)
-	if err != nil {
-		existingVM.State = vm.StateError
-		existingVM.Save(paths.VMs)
-		return "", fmt.Errorf("failed to start VM: %w", err)
-	}
-
-	existingVM.State = vm.StateRunning
-	existingVM.PID = fcClient.GetVMPID(machine)
-	existingVM.StartedAt = time.Now()
-	existingVM.Save(paths.VMs)
-
 	return existingVM.IPAddress, nil
 }
 

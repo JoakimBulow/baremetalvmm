@@ -1,16 +1,10 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"os"
-	"time"
 
 	"github.com/raesene/baremetalvmm/internal/firecracker"
-	"github.com/raesene/baremetalvmm/internal/image"
-	"github.com/raesene/baremetalvmm/internal/mount"
-	"github.com/raesene/baremetalvmm/internal/network"
-	"github.com/raesene/baremetalvmm/internal/sshkey"
+	"github.com/raesene/baremetalvmm/internal/lifecycle"
 	"github.com/raesene/baremetalvmm/internal/validate"
 	"github.com/raesene/baremetalvmm/internal/vm"
 	"github.com/spf13/cobra"
@@ -44,147 +38,26 @@ func startCmd() *cobra.Command {
 
 			fmt.Printf("Starting VM '%s'...\n", name)
 
-			// Ensure images are available
-			imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
-			if err := imgMgr.EnsureDefaultImages(); err != nil {
-				return fmt.Errorf("failed to ensure images: %w", err)
-			}
-
-			// Create VM-specific rootfs if needed
-			vmRootfs, err := imgMgr.CreateVMRootfs(name, paths.VMs, existingVM.DiskSizeMB, existingVM.Image)
-			if err != nil {
-				return fmt.Errorf("failed to create VM rootfs: %w", err)
-			}
-			existingVM.RootfsPath = vmRootfs
-
-			// Set kernel path based on custom kernel or default
-			existingVM.KernelPath = imgMgr.GetKernelPath(existingVM.Kernel)
-
-			// Inject SSH keys (vmm managed key + user key if configured)
-			fmt.Println("Injecting SSH public key...")
-			if err := sshkey.EnsureKeyPair(paths.SSH); err != nil {
-				return fmt.Errorf("failed to ensure vmm SSH key: %w", err)
-			}
-			authorizedKeys, err := sshkey.BuildAuthorizedKeys(paths.SSH, existingVM.SSHPublicKey)
-			if err != nil {
-				return fmt.Errorf("failed to build authorized keys: %w", err)
-			}
-			if err := image.InjectSSHKey(existingVM.RootfsPath, authorizedKeys); err != nil {
-				return fmt.Errorf("failed to inject SSH key: %w", err)
-			}
-
-			// Inject DNS configuration
-			fmt.Println("Configuring DNS...")
-			if err := image.InjectDNSConfig(existingVM.RootfsPath, existingVM.DNSServers); err != nil {
-				return fmt.Errorf("failed to inject DNS config: %w", err)
-			}
-
-			// Create mount images and configure fstab
-			if len(existingVM.Mounts) > 0 {
-				fmt.Println("Creating mount images...")
-			}
-			mountDrives, err := mount.NewManager(paths.Mounts).PrepareVM(existingVM, nil)
+			// The only warning a strict start can give once the VM is up is a
+			// port forward that wouldn't go in, so don't list forwards then.
+			warned := false
+			err = lifecycle.Start(cfg, existingVM, lifecycle.Options{
+				Progress: func(msg string) { fmt.Println(msg) },
+				Warn: func(msg string) {
+					warned = true
+					fmt.Printf("Warning: %s\n", msg)
+				},
+			})
 			if err != nil {
 				return err
 			}
-			if len(mountDrives) > 0 {
-				// Save updated mount image paths
-				existingVM.Save(paths.VMs)
-			}
-
-			// Setup networking
-			netMgr := network.NewManager(cfg.BridgeName, cfg.Subnet, cfg.Gateway, cfg.HostInterface)
-
-			// Ensure bridge exists
-			if err := netMgr.EnsureBridge(); err != nil {
-				return fmt.Errorf("failed to setup bridge: %w", err)
-			}
-
-			// Track resources for cleanup on failure
-			var cleanupFuncs []func()
-			startSuccess := false
-			defer func() {
-				if !startSuccess {
-					for i := len(cleanupFuncs) - 1; i >= 0; i-- {
-						cleanupFuncs[i]()
-					}
-				}
-			}()
-
-			// Create TAP device if it doesn't exist
-			if !netMgr.TapExists(existingVM.TapDevice) {
-				if err := netMgr.CreateTap(existingVM.TapDevice); err != nil {
-					return fmt.Errorf("failed to create TAP device: %w", err)
-				}
-				cleanupFuncs = append(cleanupFuncs, func() {
-					if err := netMgr.DeleteTap(existingVM.TapDevice); err != nil {
-						fmt.Printf("Warning: failed to clean up TAP device %s: %v\n", existingVM.TapDevice, err)
-					}
-				})
-			}
-
-			// Reuse existing IP if the VM already has one, otherwise allocate
-			if existingVM.IPAddress == "" {
-				ip, err := netMgr.AllocateIP(usedVMIPs(paths.VMs))
-				if err != nil {
-					return fmt.Errorf("failed to allocate IP: %w", err)
-				}
-				existingVM.IPAddress = ip
-			}
-			cleanupFuncs = append(cleanupFuncs, func() {
-				existingVM.IPAddress = ""
-				existingVM.State = vm.StateError
-				if err := existingVM.Save(paths.VMs); err != nil {
-					fmt.Printf("Warning: failed to save VM state during cleanup: %v\n", err)
-				}
-			})
-
-			// Update state to starting
-			existingVM.State = vm.StateStarting
-			existingVM.Save(paths.VMs)
-
-			// Clean up socket file on failure
-			cleanupFuncs = append(cleanupFuncs, func() {
-				if err := os.Remove(existingVM.SocketPath); err != nil && !os.IsNotExist(err) {
-					fmt.Printf("Warning: failed to clean up socket file %s: %v\n", existingVM.SocketPath, err)
-				}
-			})
-
-			// Start Firecracker
-			ctx := context.Background()
-			vmCfg := &firecracker.VMConfig{
-				SocketPath:  existingVM.SocketPath,
-				KernelPath:  existingVM.KernelPath,
-				RootfsPath:  existingVM.RootfsPath,
-				CPUs:        existingVM.CPUs,
-				MemoryMB:    existingVM.MemoryMB,
-				TapDevice:   existingVM.TapDevice,
-				MacAddress:  existingVM.MacAddress,
-				LogPath:     fmt.Sprintf("%s/%s.log", paths.Logs, name),
-				IPAddress:   existingVM.IPAddress,
-				Gateway:     cfg.Gateway,
-				Subnet:      cfg.Subnet,
-				MountDrives: mountDrives,
-			}
-
-			machine, err := fcClient.StartVM(ctx, vmCfg)
-			if err != nil {
-				return fmt.Errorf("failed to start VM: %w", err)
-			}
-
-			// Mark success to prevent cleanup
-			startSuccess = true
-
-			// Update VM state
-			existingVM.State = vm.StateRunning
-			existingVM.PID = fcClient.GetVMPID(machine)
-			existingVM.StartedAt = time.Now()
-			existingVM.Save(paths.VMs)
 
 			fmt.Printf("VM '%s' started successfully\n", name)
 			fmt.Printf("  IP Address: %s\n", existingVM.IPAddress)
 			fmt.Printf("  PID: %d\n", existingVM.PID)
-			applyPortForwards(netMgr, existingVM)
+			if !warned {
+				printPortForwards(existingVM)
+			}
 			fmt.Printf("  Socket: %s\n", existingVM.SocketPath)
 
 			return nil

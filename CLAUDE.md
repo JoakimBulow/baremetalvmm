@@ -64,6 +64,7 @@ Future work (P4 — significant effort, deferred):
 - `internal/config/` — Global config, paths, defaults. Config file: `~/.config/vmm/config.json`
 - `internal/vm/` — VM struct, state machine, JSON persistence in `/var/lib/vmm/vms/`
 - `internal/firecracker/` — Firecracker SDK wrapper, socket API
+- `internal/lifecycle/` — `Start` is the one way a VM boots (CLI `start`, autostart, cluster provisioning, web): rootfs/SSH key/DNS/mount prep, TAP and IP, launch, port forwards, and rollback on failure (an IP the VM already had is kept). `Options.BestEffort` is autostart's mode, where guest-prep failures warn instead of failing. Don't add start logic to the callers
 - `internal/network/` — TAP, bridge, iptables, NAT (MASQUERADE with `! -o vmm-br0`)
 - `internal/image/` — Kernel/rootfs download, Docker import, snapshots
 - `internal/mount/` — Host directory mount as ext4 block devices. `Manager.PrepareVM` is the one place mounts are set up for a start (CLI, web, autostart): builds the images, writes guest fstab and returns drives numbered by attached position. The rootfs has no udev, so systemd skips fstab mounts of `/dev/vdX`; `image.InjectMountFstab` also enables a guest `vmm-mounts.service` that runs `mount -a`

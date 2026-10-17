@@ -255,8 +255,8 @@ func hostAddr(port int) string {
 	return fmt.Sprintf(":%d", port)
 }
 
-// applyPortForwards installs a started VM's saved forwards, warning on
-// failures: the VM is up, so a broken forward shouldn't fail the start.
+// applyPortForwards installs a restored VM's saved forwards, warning on
+// failures: the VM is up, so a broken forward shouldn't fail the restore.
 func applyPortForwards(netMgr *network.Manager, v *vm.VM) {
 	if len(v.PortForwards) == 0 {
 		return
@@ -265,6 +265,11 @@ func applyPortForwards(netMgr *network.Manager, v *vm.VM) {
 		fmt.Printf("Warning: failed to apply port forwards: %v\n", err)
 		return
 	}
+	printPortForwards(v)
+}
+
+// printPortForwards lists a started VM's forwards.
+func printPortForwards(v *vm.VM) {
 	for _, pf := range v.PortForwards {
 		fmt.Printf("  Port forward: %s -> %s:%d (%s)\n", hostAddr(pf.HostPort), v.IPAddress, pf.GuestPort, pf.Protocol)
 	}

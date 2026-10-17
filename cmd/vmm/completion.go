@@ -74,17 +74,6 @@ func completeImageNames(cmd *cobra.Command, args []string, toComplete string) ([
 	return names, cobra.ShellCompDirectiveNoFileComp
 }
 
-func usedVMIPs(vmsDir string) []string {
-	vms, _ := vm.List(vmsDir)
-	var ips []string
-	for _, v := range vms {
-		if v.IPAddress != "" {
-			ips = append(ips, v.IPAddress)
-		}
-	}
-	return ips
-}
-
 func expandHomePath(path string) string {
 	if len(path) > 0 && path[0] == '~' {
 		home, _ := os.UserHomeDir()
