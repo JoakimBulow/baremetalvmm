@@ -148,7 +148,7 @@ var goodFiles = []tarFile{
 	{"vmm", "vmm-binary"},
 	{"vmm-web", "web-binary"},
 	{"README.md", "readme"},
-	{"scripts/install.sh", "#!/bin/bash\nFC_VERSION=\"v1.17.0\"\n"},
+	{"scripts/install.sh", "#!/bin/bash\nFC_VERSION=\"v1.17.0\"\nCH_VERSION=\"v55.0\"\nCH_SHA256_X86_64=\"" + strings.Repeat("ab", 32) + "\"\n"},
 	{"scripts/vmm-web.service", "[Unit]\n"},
 	{"scripts/dev-rootfs-files/nested", "skip me"},
 	{"other/file", "skip me too"},
@@ -208,6 +208,9 @@ func TestFetchVerifiesAndExtractsOnlyKnownFiles(t *testing.T) {
 	}
 	if b.FirecrackerVersion != "v1.17.0" {
 		t.Fatalf("FirecrackerVersion = %q", b.FirecrackerVersion)
+	}
+	if b.CloudHypervisorVersion != "v55.0" || b.CloudHypervisorSHA256["amd64"] != strings.Repeat("ab", 32) {
+		t.Fatalf("Cloud Hypervisor pin = %q %v", b.CloudHypervisorVersion, b.CloudHypervisorSHA256)
 	}
 	for _, skipped := range []string{"README.md", "other/file", "scripts/dev-rootfs-files/nested"} {
 		if fileExists(filepath.Join(b.Dir, skipped)) {
@@ -330,6 +333,56 @@ func TestInstallFirecracker(t *testing.T) {
 	f.files[base+name+".sha256.txt"] = []byte(strings.Repeat("1", 64) + "  " + name + "\n")
 	if err := f.client().InstallFirecracker(context.Background(), v, "amd64", dst, t.TempDir()); err == nil {
 		t.Fatal("tampered Firecracker archive was installed")
+	}
+}
+
+func TestCloudHypervisorFromInstaller(t *testing.T) {
+	// The real installer must carry a pin vmm upgrade can read.
+	installer, err := os.ReadFile("../../scripts/install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, sums := cloudHypervisorFromInstaller(installer)
+	if v == "" || len(sums["amd64"]) != 64 {
+		t.Fatalf("scripts/install.sh pins %q %v", v, sums)
+	}
+
+	// A version with no checksum must not be offered: it couldn't be verified.
+	if v, _ := cloudHypervisorFromInstaller([]byte("CH_VERSION=\"v54.0\"\n")); v != "" {
+		t.Errorf("version without checksum = %q", v)
+	}
+	if v, _ := cloudHypervisorFromInstaller([]byte("FC_VERSION=\"v1.16.0\"\n")); v != "" {
+		t.Errorf("installer without CH_VERSION = %q", v)
+	}
+}
+
+func TestInstallCloudHypervisor(t *testing.T) {
+	f := newFakeGitHub(t)
+	const v = "v55.0"
+	body := []byte("ch-binary")
+	f.files["/cloud-hypervisor/cloud-hypervisor/releases/download/"+v+"/cloud-hypervisor-static"] = body
+
+	dst := filepath.Join(t.TempDir(), "cloud-hypervisor")
+	os.WriteFile(dst, []byte("old-ch"), 0o755)
+	if err := f.client().InstallCloudHypervisor(context.Background(), v, sha(body), "amd64", dst, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(dst); string(data) != "ch-binary" {
+		t.Fatalf("cloud-hypervisor = %q", data)
+	}
+	if data, _ := os.ReadFile(dst + PrevSuffix); string(data) != "old-ch" {
+		t.Fatalf("cloud-hypervisor.prev = %q", data)
+	}
+
+	// A binary that doesn't match the pin, or no pin at all, must not be installed.
+	for _, pin := range []string{strings.Repeat("1", 64), ""} {
+		os.WriteFile(dst, []byte("current"), 0o755)
+		if err := f.client().InstallCloudHypervisor(context.Background(), v, pin, "amd64", dst, t.TempDir()); err == nil {
+			t.Errorf("installed with pin %q", pin)
+		}
+		if data, _ := os.ReadFile(dst); string(data) != "current" {
+			t.Errorf("pin %q replaced the binary with %q", pin, data)
+		}
 	}
 }
 

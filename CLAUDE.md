@@ -103,7 +103,7 @@ vmm kernel list [--remote]|pull <name>|import|delete|build [--profile default|k8
 vmm cluster create <name> [--type kubeadm|openshift] [--cni cilium|calico] [--workers N] [--cpus N] [--memory MB] [--disk MB] [--k8s-version VER] [--openshift-version VER] [--ssh-key PATH] [--image NAME] [--kernel NAME] [--admin-workstation]
 vmm cluster delete|list|kubeconfig <name>
 vmm config show|init [--data-dir PATH]|set <key> <value>   # set supports: data_dir
-vmm upgrade [--check] [--version X] [-y] [--force] [--rollback] [--update-units]
+vmm upgrade [--check] [--version X] [-y] [--force] [--rollback] [--update-units] [--with-cloud-hypervisor]
 vmm version [--json]
 ```
 
@@ -160,7 +160,7 @@ Static GitHub Pages site in `site/` (single `index.html` + `assets/`), deployed 
 
 ### Release Workflows
 
-- `release.yaml` — GoReleaser binary release on `v*` tags. Users upgrade with `sudo vmm upgrade`, which verifies against `checksums.txt`. To require a new Firecracker version, bump `FC_VERSION` in `scripts/install.sh`: both the installer and `vmm upgrade` (which reads it from the release tarball) use it.
+- `release.yaml` — GoReleaser binary release on `v*` tags. Users upgrade with `sudo vmm upgrade`, which verifies against `checksums.txt`. To require a new Firecracker version, bump `FC_VERSION` in `scripts/install.sh`: both the installer and `vmm upgrade` (which reads it from the release tarball) use it. Cloud Hypervisor is pinned the same way with `CH_VERSION` plus `CH_SHA256_X86_64` (upstream publishes no checksums, so bump both: `sha256sum` the new `cloud-hypervisor-static` asset). It is optional: the installer adds it with `--with-cloud-hypervisor` and `vmm upgrade` with `--with-cloud-hypervisor`; both keep an existing install up to date and refuse a binary that doesn't match the pin. `TestCloudHypervisorFromInstaller` fails if the pin lines in `scripts/install.sh` stop parsing.
 - `build-kernel.yml` — kernel compilation (default, k8s, security, cifs-vuln variants). The k8s job requires `dwarves` for BTF generation.
 - `build-rootfs.yml` / `build-k8s-rootfs.yml` / `build-security-rootfs.yml` — rootfs image builds
 

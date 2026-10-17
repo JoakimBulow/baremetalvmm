@@ -4,11 +4,13 @@
 #
 #   curl -fsSL https://raesene.github.io/baremetalvmm/install.sh | sudo bash
 #   curl -fsSL https://raesene.github.io/baremetalvmm/install.sh | sudo bash -s -- --with-services
+#   curl -fsSL https://raesene.github.io/baremetalvmm/install.sh | sudo bash -s -- --with-cloud-hypervisor
 #
 # Also works from a checkout: sudo ./scripts/install.sh [options]
 #
 # Installs the latest (or a pinned) vmm release: the vmm and vmm-web binaries,
-# helper scripts, Firecracker and the default kernels/rootfs. The release
+# helper scripts, Firecracker and the default kernels/rootfs, plus Cloud
+# Hypervisor (for nested VMs) when asked or already installed. The release
 # tarball is verified against the release's checksums.txt. Re-running the
 # script is safe and upgrades in place; after the first install you can also
 # use 'sudo vmm upgrade'. Running VMs are never stopped.
@@ -25,9 +27,16 @@ DATA_DIR="/var/lib/vmm"
 SYSTEMD_DIR="/etc/systemd/system"
 WEB_ENV="/etc/vmm-web/environment"
 FC_VERSION="v1.16.0"
+# Cloud Hypervisor publishes no checksums, so the static binary's SHA256 is
+# pinned here. 'vmm upgrade' reads both lines from the release's copy of this
+# script. To bump: download cloud-hypervisor-static for the new version from
+# github.com/cloud-hypervisor/cloud-hypervisor/releases and sha256sum it.
+CH_VERSION="v54.0"
+CH_SHA256_X86_64="4f4f98a3d661a40f3e5272627cc895a1b2e525f2f6bedf5f895f9cd21ba5c65b"
 
 VERSION="${VMM_VERSION:-}"
 WITH_SERVICES=0
+WITH_CH="${VMM_WITH_CLOUD_HYPERVISOR:-0}"
 NO_IMAGES=0
 BUILD_FROM_SOURCE=0
 
@@ -38,6 +47,9 @@ Usage: install.sh [options]
 Options:
   --version X          Install vmm version X (default: latest release; or set VMM_VERSION)
   --with-services      Install and enable the vmm and vmm-web systemd services
+  --with-cloud-hypervisor
+                       Install Cloud Hypervisor, needed for nested VMs (vmm create --nested);
+                       or set VMM_WITH_CLOUD_HYPERVISOR=1. Kept up to date once installed.
   --no-images          Skip downloading kernels and rootfs images
   --build-from-source  Build vmm from this checkout instead of downloading a release
   -h, --help           Show this help
@@ -49,6 +61,7 @@ while [ $# -gt 0 ]; do
         --version) VERSION="${2:-}"; shift ;;
         --version=*) VERSION="${1#*=}" ;;
         --with-services) WITH_SERVICES=1 ;;
+        --with-cloud-hypervisor) WITH_CH=1 ;;
         --no-images) NO_IMAGES=1 ;;
         --build-from-source) BUILD_FROM_SOURCE=1 ;;
         -h|--help) usage; exit 0 ;;
@@ -183,6 +196,37 @@ else
     ok "firecracker $FC_VERSION already installed"
 fi
 
+# ---------- Cloud Hypervisor (optional) ----------
+
+CH_BIN="$INSTALL_DIR/cloud-hypervisor"
+CH_CURRENT=""
+[ -x "$CH_BIN" ] && CH_CURRENT=$("$CH_BIN" --version 2>/dev/null | awk '{print $NF}') || true
+if [ "$WITH_CH" = 1 ] || [ -n "$CH_CURRENT" ]; then
+    if [ "$CH_CURRENT" != "$CH_VERSION" ]; then
+        say "Installing Cloud Hypervisor $CH_VERSION..."
+        fetch "https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/$CH_VERSION/cloud-hypervisor-static" "$TMP/cloud-hypervisor" \
+            || die "Cloud Hypervisor download failed"
+        echo "$CH_SHA256_X86_64  $TMP/cloud-hypervisor" | sha256sum -c --status \
+            || die "Cloud Hypervisor checksum verification failed"
+        install_bin "$TMP/cloud-hypervisor" "$CH_BIN"
+        if [ -n "$CH_CURRENT" ]; then
+            ok "cloud-hypervisor $CH_CURRENT -> $CH_VERSION (running VMs keep the old version until restarted)"
+        else
+            ok "cloud-hypervisor $CH_VERSION installed"
+        fi
+    else
+        ok "cloud-hypervisor $CH_VERSION already installed"
+    fi
+    nested=""
+    for mod in kvm_intel kvm_amd; do
+        [ -r "/sys/module/$mod/parameters/nested" ] && nested=$(cat "/sys/module/$mod/parameters/nested") && break
+    done
+    case "$nested" in
+        Y|y|1) ;;
+        *) warn "nested virtualization is disabled in KVM, so nested VMs won't start: enable it with \"echo 'options kvm_intel nested=1' > /etc/modprobe.d/kvm-nested.conf\" (kvm_amd on AMD), then reboot" ;;
+    esac
+fi
+
 # ---------- Images ----------
 
 if [ "$NO_IMAGES" = 0 ]; then
@@ -257,6 +301,11 @@ if [ -z "$PREV_VERSION" ]; then
     say "  vmm config init                              # optional: write ~/.config/vmm/config.json"
     say "  sudo vmm create myvm --cpus 2 --memory 1024"
     say "  sudo vmm start myvm && vmm ssh myvm"
+    say ""
+fi
+if [ -x "$CH_BIN" ] && [ ! -f "$DATA_DIR/images/kernels/nested-kernel" ]; then
+    say "Nested VMs need a kernel with KVM. Build it once with:"
+    say "  sudo vmm kernel build --version 6.1 --name nested-kernel --profile nested"
     say ""
 fi
 if [ -n "$WEB_PASSWORD" ]; then

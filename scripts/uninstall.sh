@@ -81,7 +81,7 @@ echo ""
 if [ "$SKIP_CONFIRM" = false ]; then
     echo "This will completely remove VMM and all associated resources:"
     echo "  - Stop all running VMs"
-    echo "  - Remove VMM and Firecracker binaries"
+    echo "  - Remove VMM, Firecracker and Cloud Hypervisor binaries"
     echo "  - Remove all VM data (/var/lib/vmm)"
     echo "  - Remove user configuration (~/.config/vmm)"
     echo "  - Remove network bridge and TAP devices"
@@ -126,15 +126,16 @@ if [ ! -f /etc/systemd/system/vmm-web.service ] && ! systemctl is-active --quiet
     echo "  vmm-web.service not installed"
 fi
 
-# 2. Stop all Firecracker processes
-echo "Stopping Firecracker processes..."
-FC_COUNT=$(pgrep -f firecracker 2>/dev/null | wc -l || echo "0")
+# 2. Stop all VM processes (Firecracker, and Cloud Hypervisor for nested VMs)
+echo "Stopping VM processes..."
+VMM_PROCS="firecracker|cloud-hypervisor"
+FC_COUNT=$(pgrep -f "$VMM_PROCS" 2>/dev/null | wc -l || echo "0")
 if [ "$FC_COUNT" -gt 0 ]; then
     # Send SIGTERM first
-    pkill -f firecracker 2>/dev/null || true
+    pkill -f "$VMM_PROCS" 2>/dev/null || true
     sleep 3
     # Force kill any remaining
-    pkill -9 -f firecracker 2>/dev/null || true
+    pkill -9 -f "$VMM_PROCS" 2>/dev/null || true
     echo -e "  ${GREEN}Stopped $FC_COUNT running VM(s)${NC}"
 else
     echo "  No running VMs found"
@@ -319,8 +320,14 @@ else
     echo "  /usr/local/bin/firecracker not found"
 fi
 
+if [ -f /usr/local/bin/cloud-hypervisor ]; then
+    rm -f /usr/local/bin/cloud-hypervisor
+    echo -e "  ${GREEN}Removed /usr/local/bin/cloud-hypervisor${NC}"
+fi
+
 # Backups kept by 'vmm upgrade' and install.sh
 for prev in /usr/local/bin/vmm.prev /usr/local/bin/vmm-web.prev /usr/local/bin/firecracker.prev \
+            /usr/local/bin/cloud-hypervisor.prev \
             /etc/systemd/system/vmm.service.prev /etc/systemd/system/vmm-web.service.prev; do
     if [ -f "$prev" ]; then
         rm -f "$prev"
