@@ -468,6 +468,12 @@ create_nested_kernel_config() {
     ./scripts/config --enable CONFIG_KVM_INTEL
     ./scripts/config --enable CONFIG_KVM_AMD
 
+    # --- ACPI power button, so Cloud Hypervisor can shut the guest down ---
+    # The guest's vmm-powerbutton.service reads the button's evdev device.
+    ./scripts/config --enable CONFIG_INPUT
+    ./scripts/config --enable CONFIG_INPUT_EVDEV
+    ./scripts/config --enable CONFIG_ACPI_BUTTON
+
     # --- vhost for QEMU/Cloud Hypervisor networking inside the guest ---
     ./scripts/config --enable CONFIG_VHOST_NET
     ./scripts/config --enable CONFIG_VHOST_VSOCK
@@ -479,7 +485,8 @@ create_nested_kernel_config() {
     local failed=false
     for opt in \
         CONFIG_VIRTUALIZATION CONFIG_KVM CONFIG_KVM_INTEL CONFIG_KVM_AMD \
-        CONFIG_PVH CONFIG_VIRTIO_PCI CONFIG_TUN CONFIG_BRIDGE; do
+        CONFIG_PVH CONFIG_VIRTIO_PCI CONFIG_TUN CONFIG_BRIDGE \
+        CONFIG_INPUT_EVDEV CONFIG_ACPI_BUTTON; do
         if grep -q "^${opt}=y" .config; then
             log_info "  $opt: enabled"
         else

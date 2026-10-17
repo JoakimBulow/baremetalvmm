@@ -9,12 +9,22 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/raesene/baremetalvmm/internal/cloudhypervisor"
 	"github.com/raesene/baremetalvmm/internal/firecracker"
 	"github.com/raesene/baremetalvmm/internal/vm"
 )
 
-// Firecracker is the default backend, used when a VM doesn't name one.
-const Firecracker = "firecracker"
+// Backend names, as stored in vm.VM.Backend.
+const (
+	// Firecracker is the default backend, used when a VM doesn't name one.
+	Firecracker = "firecracker"
+	// CloudHypervisor can expose hardware virtualization to the guest, so
+	// nested VMs use it.
+	CloudHypervisor = "cloud-hypervisor"
+)
+
+// Names lists the supported backends, default first.
+var Names = []string{Firecracker, CloudHypervisor}
 
 // Backend runs VMs under one hypervisor.
 type Backend interface {
@@ -44,7 +54,10 @@ type Snapshotter interface {
 	RestoreVM(ctx context.Context, socketPath, logPath, memPath, statePath string) (int, error)
 }
 
-var _ Snapshotter = (*firecracker.Client)(nil)
+var (
+	_ Snapshotter = (*firecracker.Client)(nil)
+	_ Backend     = (*cloudhypervisor.Client)(nil)
+)
 
 // ErrSnapshotsUnsupported is returned for VMs whose backend can't snapshot.
 var ErrSnapshotsUnsupported = errors.New("snapshots are not supported")
@@ -65,6 +78,8 @@ func For(v *vm.VM) Backend {
 	switch name := Name(v); name {
 	case Firecracker:
 		return firecracker.NewClient()
+	case CloudHypervisor:
+		return cloudhypervisor.NewClient()
 	default:
 		return unknown{name: name}
 	}

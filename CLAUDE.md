@@ -64,7 +64,9 @@ Future work (P4 — significant effort, deferred):
 - `internal/config/` — Global config, paths, defaults. Config file: `~/.config/vmm/config.json`
 - `internal/vm/` — VM struct, state machine, JSON persistence in `/var/lib/vmm/vms/`
 - `internal/hypervisor/` — VM backend selection. `Backend` (Start/Terminate/UpdateVMState/Version) and optional `Snapshotter`; `For(v)` picks the backend from `vm.VM.Backend` (empty = Firecracker, so older VM JSON is unchanged). Callers use `hypervisor.UpdateVMState`/`Terminate`/`SnapshotterFor`, never the Firecracker client directly (only `upgrade` does, to install the binary). A backend name this build doesn't know gets a stand-in that refuses start/stop and leaves recorded state alone rather than orphaning the process. Launch types (`vm.LaunchConfig`, `vm.MountDrive`, `vm.ConsoleLogPath`) live in `internal/vm` so backends don't import `hypervisor`
-- `internal/firecracker/` — Firecracker backend: SDK wrapper, socket API, process liveness
+- `internal/firecracker/` — Firecracker backend: SDK wrapper, socket API
+- `internal/cloudhypervisor/` — Cloud Hypervisor backend, for nested VMs (`vmm create --nested`, which implies `--backend cloud-hypervisor`). Runs the static `/usr/local/bin/cloud-hypervisor` binary (falls back to PATH) in its own session, waits for `vm.info` to report `Running`, and stops it via the ACPI power button then signals. No snapshots yet. Same kernels and rootfs as Firecracker (PVH boot, virtio-pci; drives are vda, vdb... in attach order; `image_type=raw` is required on every `--disk`). Nesting needs `--cpus ...,nested=on`, nested KVM on the host (`HostNested`) and a guest kernel with KVM: the `nested` build profile, installed as `nested-kernel`, which nested VMs use unless `--kernel` is given (`lifecycle.ChooseBackend`, shared by CLI, web form and API). The rootfs has no udev, so systemd-logind ignores the power button: `image.InjectPowerButtonService` adds a guest `vmm-powerbutton.service` that powers off on it (needs the nested profile's evdev + ACPI button drivers; otherwise stop falls back to SIGTERM after 3s)
+- `internal/vmproc/` — Shared hypervisor process handling: matches a VM's process by binary name (argv[0], since `comm` truncates `cloud-hypervisor`) plus API socket path, refreshes VM state, and the graceful → SIGTERM → SIGKILL `Terminate` both backends use
 - `internal/lifecycle/` — `Start` is the one way a VM boots (CLI `start`, autostart, cluster provisioning, web): rootfs/SSH key/DNS/mount prep, TAP and IP, launch, port forwards, and rollback on failure (an IP the VM already had is kept). `Options.BestEffort` is autostart's mode, where guest-prep failures warn instead of failing. Don't add start logic to the callers
 - `internal/network/` — TAP, bridge, iptables, NAT (MASQUERADE with `! -o vmm-br0`)
 - `internal/image/` — Kernel/rootfs download, Docker import, snapshots
@@ -84,7 +86,7 @@ Data directory: `/var/lib/vmm` (vms, images, kernels, logs, sockets, mounts, clu
 ## CLI Commands
 
 ```
-vmm create <name> [--cpus N] [--memory MB] [--disk MB] [--ssh-key PATH] [--dns SERVER] [--image NAME] [--kernel NAME] [--mount PATH:TAG[:ro|rw]] [--no-autostart]
+vmm create <name> [--cpus N] [--memory MB] [--disk MB] [--ssh-key PATH] [--dns SERVER] [--image NAME] [--kernel NAME] [--mount PATH:TAG[:ro|rw]] [--no-autostart] [--backend firecracker|cloud-hypervisor] [--nested]
 vmm start <name>
 vmm stop <name>
 vmm delete <name> [-f]
@@ -97,7 +99,7 @@ vmm port-forward add|remove <name> <host>:<guest>[/udp]|list [name]|apply <name>
 vmm mount list|sync <name> [tag]
 vmm snapshot create <vm> <name> [--stop]|list [vm]|restore <vm> <name> [-f] [--no-start]|show <vm> <name>|delete <vm> <name>
 vmm image list [--remote]|pull [name]|import|snapshot|delete
-vmm kernel list [--remote]|pull <name>|import|delete|build
+vmm kernel list [--remote]|pull <name>|import|delete|build [--profile default|k8s|nested|security|security-kasan]
 vmm cluster create <name> [--type kubeadm|openshift] [--cni cilium|calico] [--workers N] [--cpus N] [--memory MB] [--disk MB] [--k8s-version VER] [--openshift-version VER] [--ssh-key PATH] [--image NAME] [--kernel NAME] [--admin-workstation]
 vmm cluster delete|list|kubeconfig <name>
 vmm config show|init [--data-dir PATH]|set <key> <value>   # set supports: data_dir
@@ -137,6 +139,7 @@ All profiles start from Firecracker's minimal CI config and layer options on top
 - **`k8s`** — Extends `default` with Datadog and eBPF observability support. Adds BTF (`CONFIG_DEBUG_INFO_BTF`, requires `dwarves` package for `pahole`), dynamic ftrace (`CONFIG_FUNCTION_TRACER`, `CONFIG_DYNAMIC_FTRACE`), kprobes/uprobes, perf events, traffic-control BPF, conntrack netlink, and securityfs. Build fails if any of the 22 mandatory options are missing after `olddefconfig`. Used for k8s clusters (6.6 LTS).
 - **`security`** — Extends `default` with broad subsystem coverage for vulnerability research (IPsec, io_uring, SCTP, userfaultfd, AppArmor/SELinux, ftrace/kprobes, etc.). No BTF.
 - **`security-kasan`** — Extends `security` with KASAN memory sanitizer. Requires ~2x memory.
+- **`nested`** — Extends `default` with KVM (Intel + AMD) and vhost so the guest can run its own VMs, plus evdev and the ACPI button driver for Cloud Hypervisor's power button. Used for nested VMs; install it as `nested-kernel`.
 
 ## CI/CD
 

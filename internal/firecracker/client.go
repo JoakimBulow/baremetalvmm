@@ -2,13 +2,12 @@ package firecracker
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	sdk "github.com/firecracker-microvm/firecracker-go-sdk"
@@ -16,6 +15,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/raesene/baremetalvmm/internal/vm"
+	"github.com/raesene/baremetalvmm/internal/vmproc"
 )
 
 const (
@@ -39,19 +39,6 @@ func NewClient() *Client {
 	}
 }
 
-// netmaskFromCIDR derives a dotted-decimal netmask from a CIDR string (e.g. "172.16.0.0/16" -> "255.255.0.0").
-func netmaskFromCIDR(cidr string) string {
-	_, ipnet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return "255.255.0.0" // fallback
-	}
-	mask := ipnet.Mask
-	if len(mask) != 4 {
-		return "255.255.0.0"
-	}
-	return fmt.Sprintf("%d.%d.%d.%d", mask[0], mask[1], mask[2], mask[3])
-}
-
 // Name identifies this backend in VM and snapshot records.
 func (c *Client) Name() string {
 	return "firecracker"
@@ -61,6 +48,9 @@ func (c *Client) Name() string {
 // PID. The process isn't tied to any caller's context, so it outlives the
 // command or HTTP request that started it.
 func (c *Client) Start(cfg *vm.LaunchConfig) (int, error) {
+	if cfg.Nested {
+		return 0, errors.New("firecracker can't run nested VMs; use the cloud-hypervisor backend")
+	}
 	ctx := context.Background()
 
 	// Ensure socket doesn't exist
@@ -80,11 +70,7 @@ func (c *Client) Start(cfg *vm.LaunchConfig) (int, error) {
 		kernelArgs = "console=ttyS0 reboot=k panic=1 pci=off"
 	}
 
-	// Add IP configuration if provided
-	// Format: ip=<client-ip>::<gateway-ip>:<netmask>::eth0:off
-	if cfg.IPAddress != "" && cfg.Gateway != "" {
-		kernelArgs += fmt.Sprintf(" ip=%s::%s:%s::eth0:off", cfg.IPAddress, cfg.Gateway, netmaskFromCIDR(cfg.Subnet))
-	}
+	kernelArgs += cfg.IPBootArg()
 
 	// Build drives list starting with rootfs
 	drives := []models.Drive{
@@ -339,61 +325,17 @@ func (c *Client) StopVM(ctx context.Context, socketPath string) error {
 	return nil
 }
 
+// proc matches Firecracker processes to the VMs they serve.
+const proc = vmproc.Binary("firecracker")
+
 // Terminate stops the Firecracker process backing a VM and does not return
-// until the process is gone. It escalates from a guest shutdown request
-// (Ctrl+Alt+Del over the API socket) to SIGTERM and finally SIGKILL, then
-// removes the API socket file.
-//
-// The VM's PID field is updated to reflect reality: it is set to the PID that
-// was actually terminated while work is in progress, and cleared to 0 once the
-// process is confirmed gone. An error is returned only when a process is still
-// running afterwards, in which case PID still holds the surviving PID so the
-// caller can report it rather than orphan it.
+// until the process is gone. It first asks the guest to shut down
+// (Ctrl+Alt+Del over the API socket, which only works when the guest kernel
+// has the i8042 driver), then escalates to signals. See vmproc.Terminate.
 func (c *Client) Terminate(ctx context.Context, v *vm.VM) error {
-	pid := ResolvePID(v.SocketPath, v.PID)
-	if pid == 0 {
-		// Nothing running for this VM
-		v.PID = 0
-		if err := os.Remove(v.SocketPath); err != nil && !os.IsNotExist(err) {
-			c.Logger.Debugf("failed to remove socket %s: %v", v.SocketPath, err)
-		}
-		return nil
-	}
-	v.PID = pid
-
-	// Ask the guest to shut down cleanly. This only works when the guest
-	// kernel has the i8042 driver, so don't wait long for it.
-	if _, err := os.Stat(v.SocketPath); err == nil {
-		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err := c.StopVM(shutdownCtx, v.SocketPath)
-		cancel()
-		if err != nil {
-			c.Logger.Debugf("graceful shutdown request failed for VM %s: %v", v.Name, err)
-		} else if waitForExit(pid, v.SocketPath, gracefulShutdownWait) {
-			return c.finishTerminate(v)
-		}
-	}
-
-	// Escalate: SIGTERM makes Firecracker exit and tear down the microVM.
-	if signalAndWait(pid, v.SocketPath, syscall.SIGTERM, sigtermWait) {
-		return c.finishTerminate(v)
-	}
-
-	c.Logger.Warnf("Firecracker process %d for VM %s ignored SIGTERM, sending SIGKILL", pid, v.Name)
-	if signalAndWait(pid, v.SocketPath, syscall.SIGKILL, sigkillWait) {
-		return c.finishTerminate(v)
-	}
-
-	return fmt.Errorf("firecracker process %d for VM '%s' is still running after SIGKILL", pid, v.Name)
-}
-
-// finishTerminate records that the VM's process is gone and cleans up the socket.
-func (c *Client) finishTerminate(v *vm.VM) error {
-	v.PID = 0
-	if err := os.Remove(v.SocketPath); err != nil && !os.IsNotExist(err) {
-		c.Logger.Debugf("failed to remove socket %s: %v", v.SocketPath, err)
-	}
-	return nil
+	return proc.Terminate(ctx, v, func(ctx context.Context) error {
+		return c.StopVM(ctx, v.SocketPath)
+	})
 }
 
 // connectToMachine connects to an existing Firecracker instance
@@ -417,13 +359,6 @@ func (c *Client) connectToMachine(ctx context.Context, socketPath string) (*sdk.
 	return machine, nil
 }
 
-// IsRunning checks if a VM is running by looking for its Firecracker process.
-// The process is authoritative: a missing socket file does not mean the VM is
-// gone, and a stale recorded PID does not mean it is alive.
-func (c *Client) IsRunning(socketPath string, pid int) bool {
-	return ResolvePID(socketPath, pid) > 0
-}
-
 // pidOf returns the Firecracker process's PID, or 0 if it isn't known.
 func pidOf(machine *sdk.Machine) int {
 	if machine == nil {
@@ -433,17 +368,7 @@ func pidOf(machine *sdk.Machine) int {
 	return pid
 }
 
-// UpdateVMState updates the VM struct based on actual state. When a running
-// Firecracker process is found, the VM's PID is repaired to match it so that
-// later stop/delete operations can terminate the right process.
+// UpdateVMState sets the VM's state and PID from its Firecracker process.
 func (c *Client) UpdateVMState(v *vm.VM) {
-	if pid := ResolvePID(v.SocketPath, v.PID); pid > 0 {
-		v.PID = pid
-		v.State = vm.StateRunning
-	} else {
-		v.PID = 0
-		if v.State == vm.StateRunning || v.State == vm.StateStarting || v.State == vm.StateStopping {
-			v.State = vm.StateStopped
-		}
-	}
+	proc.UpdateVMState(v)
 }

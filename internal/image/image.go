@@ -1264,27 +1264,96 @@ WantedBy=multi-user.target
 // installMountService enables vmm-mounts.service in the mounted rootfs at
 // root, or removes it when the VM no longer has mounts.
 func installMountService(root string, enable bool) error {
-	unitPath := filepath.Join(root, "etc", "systemd", "system", mountServiceName)
+	return installUnit(root, mountServiceName, mountServiceUnit, enable)
+}
+
+// installUnit writes a systemd unit into the mounted rootfs at root and
+// enables it for multi-user.target, or removes it when enable is false.
+func installUnit(root, name, unit string, enable bool) error {
+	unitPath := filepath.Join(root, "etc", "systemd", "system", name)
 	wantsDir := filepath.Join(root, "etc", "systemd", "system", "multi-user.target.wants")
-	linkPath := filepath.Join(wantsDir, mountServiceName)
+	linkPath := filepath.Join(wantsDir, name)
 
 	os.Remove(linkPath)
 	if !enable {
 		if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to remove %s: %w", mountServiceName, err)
+			return fmt.Errorf("failed to remove %s: %w", name, err)
 		}
 		return nil
 	}
 	if err := os.MkdirAll(wantsDir, 0755); err != nil {
 		return fmt.Errorf("failed to create %s: %w", wantsDir, err)
 	}
-	if err := os.WriteFile(unitPath, []byte(mountServiceUnit), 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", mountServiceName, err)
+	if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", name, err)
 	}
-	if err := os.Symlink("/etc/systemd/system/"+mountServiceName, linkPath); err != nil {
-		return fmt.Errorf("failed to enable %s: %w", mountServiceName, err)
+	if err := os.Symlink("/etc/systemd/system/"+name, linkPath); err != nil {
+		return fmt.Errorf("failed to enable %s: %w", name, err)
 	}
 	return nil
+}
+
+const (
+	powerButtonServiceName = "vmm-powerbutton.service"
+	powerButtonScriptPath  = "/usr/local/sbin/vmm-powerbutton"
+)
+
+// powerButtonScript powers the guest off when its ACPI power button is
+// pressed, which is how Cloud Hypervisor asks a guest to shut down.
+// systemd-logind would do this, but it only watches buttons udev has tagged,
+// and the rootfs images have no udev. devtmpfs creates /dev/input/eventN
+// without it. Reads from an evdev device must fit a whole event, hence bs.
+const powerButtonScript = `#!/bin/sh
+# VMM generated: powers off when the ACPI power button is pressed
+for dev in /sys/class/input/event*; do
+	[ "$(cat "$dev/device/name" 2>/dev/null)" = "Power Button" ] || continue
+	# Block until the button sends an event, then shut down cleanly.
+	dd if="/dev/input/${dev##*/}" of=/dev/null bs=1024 count=1 status=none && exec systemctl poweroff
+done
+`
+
+const powerButtonServiceUnit = `# VMM generated: powers off when the ACPI power button is pressed
+[Unit]
+Description=Power off on the ACPI power button
+After=local-fs.target
+
+[Service]
+ExecStart=` + powerButtonScriptPath + `
+
+[Install]
+WantedBy=multi-user.target
+`
+
+// InjectPowerButtonService installs vmm-powerbutton.service into a rootfs
+// image, so Cloud Hypervisor can shut the guest down cleanly. It needs a
+// guest kernel with the ACPI button and evdev drivers (the nested profile);
+// without them it exits at boot and stops fall back to signals.
+func InjectPowerButtonService(rootfsPath string) error {
+	mountPoint, err := os.MkdirTemp("", "vmm-rootfs-*")
+	if err != nil {
+		return fmt.Errorf("failed to create mount point: %w", err)
+	}
+	defer os.RemoveAll(mountPoint)
+
+	if output, err := exec.Command("mount", "-o", "loop", rootfsPath, mountPoint).CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to mount rootfs: %w: %s", err, string(output))
+	}
+	defer func() { _ = exec.Command("umount", mountPoint).Run() }()
+
+	return installPowerButtonService(mountPoint)
+}
+
+// installPowerButtonService writes the power button script and unit into
+// the mounted rootfs at root.
+func installPowerButtonService(root string) error {
+	script := filepath.Join(root, powerButtonScriptPath)
+	if err := os.MkdirAll(filepath.Dir(script), 0755); err != nil {
+		return fmt.Errorf("failed to create %s: %w", filepath.Dir(script), err)
+	}
+	if err := os.WriteFile(script, []byte(powerButtonScript), 0755); err != nil {
+		return fmt.Errorf("failed to write %s: %w", powerButtonScriptPath, err)
+	}
+	return installUnit(root, powerButtonServiceName, powerButtonServiceUnit, true)
 }
 
 // InjectSSHKey injects an SSH public key into a rootfs image

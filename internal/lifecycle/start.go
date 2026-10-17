@@ -93,6 +93,15 @@ func Start(cfg *config.Config, v *vm.VM, opts Options) error {
 		}
 	}
 
+	if hypervisor.Name(v) == hypervisor.CloudHypervisor {
+		// Cloud Hypervisor asks the guest to stop with the ACPI power button.
+		if err := image.InjectPowerButtonService(v.RootfsPath); err != nil {
+			if err := opts.soft(fmt.Errorf("failed to install power button service: %w", err)); err != nil {
+				return err
+			}
+		}
+	}
+
 	var skip func(*vm.Mount, error)
 	if opts.BestEffort {
 		skip = func(m *vm.Mount, err error) {
@@ -186,6 +195,7 @@ func Start(cfg *config.Config, v *vm.VM, opts Options) error {
 		Gateway:     cfg.Gateway,
 		Subnet:      cfg.Subnet,
 		MountDrives: mountDrives,
+		Nested:      v.Nested,
 	}
 
 	pid, err := hv.Start(vmCfg)

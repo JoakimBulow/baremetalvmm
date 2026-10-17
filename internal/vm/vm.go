@@ -3,6 +3,7 @@ package vm
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -50,6 +51,9 @@ type VM struct {
 	// Backend is the hypervisor the VM runs under. Empty means Firecracker,
 	// which is what every VM created before backends existed uses.
 	Backend string `json:"backend,omitempty"`
+	// Nested exposes hardware virtualization to the guest so it can run its
+	// own VMs. Only backends other than Firecracker support it.
+	Nested bool `json:"nested,omitempty"`
 }
 
 // PortForward represents a port forwarding rule
@@ -82,6 +86,31 @@ type LaunchConfig struct {
 	Gateway     string
 	Subnet      string
 	MountDrives []MountDrive
+	// Nested exposes VMX/SVM to the guest.
+	Nested bool
+}
+
+// IPBootArg returns the kernel argument that configures the guest's eth0
+// statically (with a leading space), or "" if the VM has no address:
+// ip=<client-ip>::<gateway-ip>:<netmask>::eth0:off
+func (c *LaunchConfig) IPBootArg() string {
+	if c.IPAddress == "" || c.Gateway == "" {
+		return ""
+	}
+	return fmt.Sprintf(" ip=%s::%s:%s::eth0:off", c.IPAddress, c.Gateway, netmaskFromCIDR(c.Subnet))
+}
+
+// netmaskFromCIDR derives a dotted-decimal netmask from a CIDR string (e.g. "172.16.0.0/16" -> "255.255.0.0").
+func netmaskFromCIDR(cidr string) string {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return "255.255.0.0" // fallback
+	}
+	mask := ipnet.Mask
+	if len(mask) != 4 {
+		return "255.255.0.0"
+	}
+	return fmt.Sprintf("%d.%d.%d.%d", mask[0], mask[1], mask[2], mask[3])
 }
 
 // MountDrive is a mount image attached to a VM after its rootfs, in order

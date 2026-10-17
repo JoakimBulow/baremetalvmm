@@ -160,3 +160,13 @@ func TestBackendOmittedForLegacyVMs(t *testing.T) {
 		t.Errorf("default VM JSON contains a backend key:\n%s", data)
 	}
 }
+
+func TestIPBootArg(t *testing.T) {
+	c := &LaunchConfig{IPAddress: "10.1.0.5", Gateway: "10.1.0.1", Subnet: "10.1.0.0/24"}
+	if got, want := c.IPBootArg(), " ip=10.1.0.5::10.1.0.1:255.255.255.0::eth0:off"; got != want {
+		t.Errorf("IPBootArg = %q, want %q", got, want)
+	}
+	if got := (&LaunchConfig{Gateway: "10.1.0.1"}).IPBootArg(); got != "" {
+		t.Errorf("IPBootArg without an IP = %q, want empty", got)
+	}
+}

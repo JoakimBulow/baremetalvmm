@@ -44,6 +44,7 @@
                 <div><dt>Disk</dt><dd>{{.VM.DiskSizeMB}} MB</dd></div>
                 {{if .VM.Image}}<div><dt>Image</dt><dd>{{.VM.Image}}</dd></div>{{end}}
                 {{if .VM.Kernel}}<div><dt>Kernel</dt><dd>{{.VM.Kernel}}</dd></div>{{end}}
+                <div><dt>Backend</dt><dd>{{.Backend}}{{if .VM.Nested}} <span class="muted">· nested virtualization</span>{{end}}</dd></div>
                 <div><dt>SSH key</dt><dd>{{if .VM.SSHPublicKey}}configured{{else}}<span class="muted">managed key only</span>{{end}}</dd></div>
             </dl>
         </div>
@@ -181,7 +182,9 @@
 <section class="panel mt-5">
     <div class="panel-head">
         <div><span class="hw">state / memory + disk</span><h2>Snapshots</h2></div>
-        {{if eq (printf "%s" .VM.State) "running"}}
+        {{if not .CanSnapshot}}
+        <span class="muted small">Snapshots aren't supported under {{.Backend}}</span>
+        {{else if eq (printf "%s" .VM.State) "running"}}
         <form method="POST" action="/vms/{{.VM.Name}}/snapshots" class="inline-form">
             <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
             <input type="text" name="snapshot_name" required placeholder="snapshot name" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}" title="Letters, digits, dots, hyphens, underscores (max 64)" class="input">

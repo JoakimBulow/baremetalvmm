@@ -145,3 +145,26 @@ func TestInstallMountService(t *testing.T) {
 		t.Errorf("disable with nothing installed: %v", err)
 	}
 }
+
+func TestInstallPowerButtonService(t *testing.T) {
+	root := t.TempDir()
+
+	// Every start reinstalls it, so a second install must not fail.
+	for range 2 {
+		if err := installPowerButtonService(root); err != nil {
+			t.Fatalf("install: %v", err)
+		}
+	}
+	info, err := os.Stat(filepath.Join(root, powerButtonScriptPath))
+	if err != nil || info.Mode().Perm()&0111 == 0 {
+		t.Fatalf("script missing or not executable: %v", err)
+	}
+	unit, err := os.ReadFile(filepath.Join(root, "etc/systemd/system", powerButtonServiceName))
+	if err != nil || !strings.Contains(string(unit), "ExecStart="+powerButtonScriptPath) {
+		t.Errorf("unit not written: %v", err)
+	}
+	link := filepath.Join(root, "etc/systemd/system/multi-user.target.wants", powerButtonServiceName)
+	if _, err := os.Readlink(link); err != nil {
+		t.Errorf("unit not enabled: %v", err)
+	}
+}

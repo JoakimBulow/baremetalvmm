@@ -4,7 +4,7 @@
     <div>
         <div class="eyebrow"><a href="/vms">Virtual machines</a> / new</div>
         <h1>Create virtual machine</h1>
-        <p class="lede">Configure and create a new Firecracker microVM.</p>
+        <p class="lede">Configure and create a new microVM.</p>
     </div>
     <div class="cmdline"><span class="prompt">$</span><span><span class="tok-cmd">vmm create</span> <span class="tok-data">&lt;name&gt;</span> <span class="tok-flag">--cpus --memory --disk</span></span></div>
 </header>
@@ -62,6 +62,14 @@
                 </select>
             </div>
             {{end}}
+
+            <label class="check">
+                <input type="checkbox" name="nested" id="nested">
+                <span>
+                    <span class="label">Nested virtualization</span>
+                    <span class="hint block">Lets the VM run its own VMs. Runs under Cloud Hypervisor with the nested-kernel kernel unless you pick another; needs nested KVM enabled on this host. No snapshots.</span>
+                </span>
+            </label>
 
             <div class="field">
                 <label for="ssh_key">SSH public key <span class="label-opt">optional</span></label>

@@ -203,6 +203,15 @@ func (s *Server) handleVMCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	nested := r.FormValue("nested") != ""
+	backend, kernelName, err := lifecycle.ChooseBackend(imgMgr, "", nested, kernelName)
+	if err != nil {
+		s.renderPage(w, r, "vm_create.html", "vms", map[string]interface{}{
+			"Flash": err.Error(), "FlashType": "error",
+		})
+		return
+	}
+
 	if all, err := vm.List(paths.VMs); err == nil {
 		if err := portforward.CheckNew(all, name, portForwards); err != nil {
 			s.renderPage(w, r, "vm_create.html", "vms", map[string]interface{}{
@@ -218,6 +227,8 @@ func (s *Server) handleVMCreate(w http.ResponseWriter, r *http.Request) {
 	newVM.DiskSizeMB = disk
 	newVM.Image = imageName
 	newVM.Kernel = kernelName
+	newVM.Backend = backend
+	newVM.Nested = nested
 	newVM.MacAddress = newVM.GenerateMacAddress()
 	newVM.TapDevice = network.GenerateTapName(newVM.ID)
 	newVM.DNSServers = dnsServers
@@ -269,6 +280,9 @@ func (s *Server) renderVMDetail(w http.ResponseWriter, r *http.Request, v *vm.VM
 		data = map[string]interface{}{}
 	}
 	data["VM"] = v
+	data["Backend"] = hypervisor.Name(v)
+	_, snapErr := hypervisor.SnapshotterFor(v)
+	data["CanSnapshot"] = snapErr == nil
 	data["Snapshots"] = snaps
 	data["MaxUpload"] = s.maxUploadBytes
 	s.addForwardRows(data, []*vm.VM{v})
@@ -514,6 +528,8 @@ func (s *Server) handleAPIVMCreate(w http.ResponseWriter, r *http.Request) {
 		Image        string           `json:"image"`
 		DNSServers   []string         `json:"dns_servers"`
 		PortForwards []vm.PortForward `json:"port_forwards"`
+		Backend      string           `json:"backend"`
+		Nested       bool             `json:"nested"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "Invalid request body", http.StatusBadRequest)
@@ -575,12 +591,21 @@ func (s *Server) handleAPIVMCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
+	backend, kernelName, err := lifecycle.ChooseBackend(imgMgr, req.Backend, req.Nested, req.Kernel)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	newVM := vm.NewVM(req.Name)
 	newVM.CPUs = req.CPUs
 	newVM.MemoryMB = req.MemoryMB
 	newVM.DiskSizeMB = req.DiskSizeMB
 	newVM.Image = req.Image
-	newVM.Kernel = req.Kernel
+	newVM.Kernel = kernelName
+	newVM.Backend = backend
+	newVM.Nested = req.Nested
 	newVM.MacAddress = newVM.GenerateMacAddress()
 	newVM.TapDevice = network.GenerateTapName(newVM.ID)
 	newVM.DNSServers = req.DNSServers

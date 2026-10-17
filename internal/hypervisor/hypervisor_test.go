@@ -57,3 +57,21 @@ func TestUnknownBackendLeavesVMAlone(t *testing.T) {
 		t.Errorf("SnapshotterFor error = %v, want ErrSnapshotsUnsupported", err)
 	}
 }
+
+func TestNamesMatchBackends(t *testing.T) {
+	for _, name := range Names {
+		if got := For(&vm.VM{Backend: name}).Name(); got != name {
+			t.Errorf("For(%q).Name() = %q", name, got)
+		}
+	}
+}
+
+func TestCloudHypervisorHasNoSnapshots(t *testing.T) {
+	v := &vm.VM{Name: "a", Backend: CloudHypervisor}
+	if err := Supported(v); err != nil {
+		t.Errorf("Supported: %v", err)
+	}
+	if _, err := SnapshotterFor(v); !errors.Is(err, ErrSnapshotsUnsupported) {
+		t.Errorf("SnapshotterFor error = %v, want ErrSnapshotsUnsupported", err)
+	}
+}
