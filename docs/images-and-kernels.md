@@ -25,6 +25,7 @@ Root filesystems:
 | Security/vuln testing | `security-kernel` | `rootfs` (default) or `k8s-<version>` | `sudo vmm create testvm --kernel security-kernel` |
 | Memory bug detection | `kasan-kernel` | `rootfs` (default) | `sudo vmm create testvm --kernel kasan-kernel --memory 1024` |
 | Nested VMs (VMs inside VMs) | `nested-kernel` (auto-selected) | `rootfs` (default) | `sudo vmm create lab --nested` |
+| Nested clusters (Kata Containers) | `k8s-kernel` (has KVM) | `k8s-<version>` (auto-detected) | `sudo vmm cluster create lab --nested` |
 
 ### Naming Convention
 

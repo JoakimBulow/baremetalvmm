@@ -153,7 +153,7 @@ Each mount is a copy of the host directory, taken into an ext4 image when the VM
 
 | Command | Description |
 |---------|-------------|
-| `vmm cluster create <name>` | Create a Kubernetes cluster (use `--admin-workstation` to add a security tooling VM) |
+| `vmm cluster create <name>` | Create a Kubernetes cluster (use `--admin-workstation` to add a security tooling VM, `--nested` for nodes that can run VMs, e.g. for Kata Containers) |
 | `vmm cluster delete <name>` | Delete a cluster and all its VMs |
 | `vmm cluster list` | List all clusters |
 | `vmm cluster kubeconfig <name>` | Re-extract and merge kubeconfig |

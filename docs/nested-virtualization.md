@@ -111,6 +111,52 @@ curl -X POST -H "Authorization: Bearer <session-token>" \
 
 `"backend":"cloud-hypervisor"` selects the backend without nesting.
 
+## Nested Clusters (Kata Containers)
+
+`vmm cluster create --nested` runs a kubeadm cluster's nodes as nested VMs, so every node has `/dev/kvm`. That's what Kata Containers, KubeVirt and similar projects need to run pods inside VMs.
+
+```bash
+sudo vmm kernel pull k8s-kernel --force   # a k8s-kernel with KVM (the kernel your install already has may predate it)
+sudo vmm cluster create lab --nested --workers 1 --cpus 4 --memory 8192 --disk 20480
+```
+
+- Nodes run under Cloud Hypervisor with the cluster's Kubernetes kernel (`k8s-kernel` by default). Unlike a single nested VM, a nested cluster never falls back to `nested-kernel`, which lacks the Kubernetes options.
+- Once the nodes boot, vmm checks each one has `/dev/kvm` before installing Kubernetes. A `k8s-kernel` built before KVM was added fails at that point, with instructions to pull a new one.
+- The admin workstation (`--admin-workstation`) doesn't need nesting and stays on Firecracker.
+- Only kubeadm clusters can be nested, not `--type openshift`.
+- Size the nodes for the pod VMs they will run as well as for Kubernetes: 4 vCPUs and 8 GB per node is a comfortable start.
+
+### Installing Kata Containers
+
+Kata's [kata-deploy Helm chart](https://kata-containers.github.io/kata-containers/installation/) installs Kata and its RuntimeClasses on the nodes:
+
+```bash
+helm --kube-context vmm-lab install kata-deploy \
+  oci://ghcr.io/kata-containers/kata-deploy-charts/kata-deploy \
+  --version 4.2.0 -n kube-system --wait
+kubectl --context vmm-lab get runtimeclasses
+```
+
+Then run a pod in a Kata VM:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kata-test
+spec:
+  runtimeClassName: kata-clh-runtime-rs   # or kata-qemu-runtime-rs
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: quay.io/libpod/ubuntu:latest
+      command: ["uname", "-r"]
+```
+
+`kubectl --context vmm-lab logs kata-test` prints the Kata guest kernel, not the node's, which shows the pod ran in its own VM. Tested with Kata 4.2.0: both `kata-clh-runtime-rs` and `kata-qemu-runtime-rs` work. In clusters with workers the control plane keeps its `NoSchedule` taint, so Kata is installed on, and pods run on, the workers. vmm removes that taint on single-node clusters, so there Kata runs on the one node.
+
+Kata pods are three levels deep (host → node VM → Kata VM), so they start in seconds rather than milliseconds and run slower than ordinary pods. That's fine for trying Kata out and testing workloads against it, not for benchmarking.
+
 ## How It Works
 
 - **Same images.** Cloud Hypervisor boots the same kernels and root filesystems as Firecracker. Drives appear in the same order (`/dev/vda` for the rootfs, then mounts as `vdb`, `vdc`...), and the guest gets its address from the same `ip=` boot argument on the same TAP device and bridge.

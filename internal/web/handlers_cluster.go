@@ -15,6 +15,7 @@ import (
 	"github.com/raesene/baremetalvmm/internal/cluster"
 	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/image"
+	"github.com/raesene/baremetalvmm/internal/lifecycle"
 	"github.com/raesene/baremetalvmm/internal/network"
 	"github.com/raesene/baremetalvmm/internal/sshkey"
 	"github.com/raesene/baremetalvmm/internal/validate"
@@ -127,6 +128,7 @@ func (s *Server) handleClusterCreate(w http.ResponseWriter, r *http.Request) {
 	imageName := r.FormValue("image")
 	cni := cluster.NormalizeCNI(r.FormValue("cni"))
 	adminWorkstation := r.FormValue("admin_workstation") == "on"
+	nested := r.FormValue("nested") == "on"
 
 	if err := validate.CPUs(cpus); err != nil {
 		s.renderPage(w, r, "cluster_create.html", "clusters", map[string]interface{}{
@@ -234,6 +236,16 @@ func (s *Server) handleClusterCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if nested {
+		if err := lifecycle.CheckNestedCluster(imgMgr, isOpenShift, cl.Kernel); err != nil {
+			s.renderPage(w, r, "cluster_create.html", "clusters", map[string]interface{}{
+				"Flash": err.Error(), "FlashType": "error",
+			})
+			return
+		}
+		cl.Nested = true
+	}
+
 	var adminPubKey string
 	if adminWorkstation {
 		secImage := imgMgr.FindSecurityRootfs()
@@ -291,6 +303,7 @@ func (s *Server) handleClusterCreate(w http.ResponseWriter, r *http.Request) {
 			newVM.SSHPublicKey = sshkey.JoinKeys(sshKey, adminPubKey)
 		}
 		newVM.SocketPath = fmt.Sprintf("%s/%s.sock", paths.Sockets, vmName)
+		cl.ConfigureNodeVM(newVM)
 
 		if err := newVM.Save(paths.VMs); err != nil {
 			cl.State = cluster.StateError
@@ -545,6 +558,7 @@ func (s *Server) handleAPIClusterCreate(w http.ResponseWriter, r *http.Request) 
 		Image            string `json:"image"`
 		AdminWorkstation bool   `json:"admin_workstation"`
 		CNI              string `json:"cni"`
+		Nested           bool   `json:"nested"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "Invalid request body", http.StatusBadRequest)
@@ -682,6 +696,14 @@ func (s *Server) handleAPIClusterCreate(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	if req.Nested {
+		if err := lifecycle.CheckNestedCluster(imgMgr, isOpenShift, cl.Kernel); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cl.Nested = true
+	}
+
 	var adminPubKey string
 	if req.AdminWorkstation {
 		secImage := imgMgr.FindSecurityRootfs()
@@ -728,6 +750,7 @@ func (s *Server) handleAPIClusterCreate(w http.ResponseWriter, r *http.Request) 
 			newVM.SSHPublicKey = sshkey.JoinKeys(req.SSHKey, adminPubKey)
 		}
 		newVM.SocketPath = fmt.Sprintf("%s/%s.sock", paths.Sockets, vmName)
+		cl.ConfigureNodeVM(newVM)
 
 		if err := newVM.Save(paths.VMs); err != nil {
 			cl.State = cluster.StateError

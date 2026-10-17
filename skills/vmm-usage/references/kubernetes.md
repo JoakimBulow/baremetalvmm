@@ -92,3 +92,21 @@ Each cluster node uses the configured CPU/memory/disk. A 3-node cluster with def
 - 30 GB disk (10 GB per node)
 
 Plan host resources accordingly when creating multiple clusters or combining with standalone VMs.
+
+## Nested Clusters (Kata Containers)
+
+`--nested` runs the nodes under Cloud Hypervisor with `/dev/kvm`, so pods can run in VMs with Kata Containers (or VMs with KubeVirt). kubeadm clusters only.
+
+Prerequisites (same as nested VMs in the main skill, plus a KVM-capable k8s kernel): nested KVM on the host, `cloud-hypervisor` installed, and a current `k8s-kernel` (`sudo vmm kernel pull k8s-kernel --force` if the local one predates KVM support — provisioning fails with a "has no /dev/kvm" message otherwise, before Kubernetes is installed).
+
+```bash
+sudo vmm cluster create lab --nested --workers 1 --cpus 4 --memory 8192 --disk 20480
+
+# Install Kata (needs helm) and run a pod in a Kata VM
+helm --kube-context vmm-lab install kata-deploy \
+  oci://ghcr.io/kata-containers/kata-deploy-charts/kata-deploy --version 4.2.0 -n kube-system --wait
+kubectl --context vmm-lab get runtimeclasses     # kata-clh-runtime-rs, kata-qemu-runtime-rs, ...
+```
+
+Pods with `runtimeClassName: kata-clh-runtime-rs` (or `kata-qemu-runtime-rs`) run in their own VM; `uname -r` inside shows the Kata guest kernel, not the node's. Give nodes 4 vCPUs / 8 GB or more. With workers, the control plane stays tainted and Kata pods run on workers; single-node clusters have the taint removed. Kata pods are three virtualization levels deep, so expect them to be slower than ordinary pods.
+

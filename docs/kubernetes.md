@@ -85,6 +85,16 @@ Flags:
   --kernel string        Kernel name (k8s-kernel recommended)
   --image string         Rootfs image name
   --admin-workstation    Create an admin workstation VM with security tools and cluster kubeconfig
+  --nested               Run the nodes under Cloud Hypervisor with /dev/kvm, e.g. for Kata Containers
+                         (see Nested Clusters below)
+```
+
+## Nested Clusters
+
+`--nested` runs the nodes under Cloud Hypervisor with `/dev/kvm`, so pods can run in VMs with Kata Containers (or VMs can run with KubeVirt). It needs Cloud Hypervisor, nested KVM on the host and a `k8s-kernel` with KVM support. See [Nested Clusters](nested-virtualization.md#nested-clusters-kata-containers) for setup and a Kata walkthrough.
+
+```bash
+sudo vmm cluster create lab --nested --workers 1 --cpus 4 --memory 8192
 ```
 
 ## Admin Workstation

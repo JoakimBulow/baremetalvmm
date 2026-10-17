@@ -115,7 +115,7 @@ sudo vmm start lab
 sudo vmm ssh lab -- ls -l /dev/kvm
 ```
 
-See [Nested Virtualization](docs/nested-virtualization.md) for setup, how it works and its limitations (no memory snapshots yet).
+Whole Kubernetes clusters can be nested too, for running pods in VMs with Kata Containers: `sudo vmm cluster create lab --nested --workers 1`. See [Nested Virtualization](docs/nested-virtualization.md) for setup, a Kata walkthrough, how it works and its limitations (no memory snapshots yet).
 
 ## Documentation
 

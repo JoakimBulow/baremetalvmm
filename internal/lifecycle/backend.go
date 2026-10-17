@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -13,6 +14,22 @@ import (
 // kernels are built without KVM, so the guest couldn't use the
 // virtualization extensions it is given.
 const NestedKernel = "nested-kernel"
+
+// CheckNestedCluster checks a nested cluster can be created on this host
+// with the given node kernel. Its nodes run nested under Cloud Hypervisor,
+// so it has the same host requirements as a nested VM, but the nodes need a
+// Kubernetes kernel that also has KVM, so nested-kernel is no substitute
+// and a kernel must be given.
+func CheckNestedCluster(imgMgr *image.Manager, openshift bool, kernel string) error {
+	if openshift {
+		return errors.New("nested clusters are only supported for kubeadm clusters, not OpenShift")
+	}
+	if kernel == "" {
+		return errors.New("nested clusters need a Kubernetes kernel with KVM support; download it with 'sudo vmm kernel pull k8s-kernel'")
+	}
+	_, _, err := ChooseBackend(imgMgr, "", true, kernel)
+	return err
+}
 
 // ChooseBackend settles the backend, and for nested VMs the kernel, of a new
 // VM, and checks this host can run it. backend is the one asked for ("" for

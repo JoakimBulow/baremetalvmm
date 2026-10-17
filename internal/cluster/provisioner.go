@@ -132,8 +132,7 @@ echo "net.bridge.bridge-nf-call-iptables = 1" >> /etc/sysctl.d/k8s.conf
 echo "net.bridge.bridge-nf-call-ip6tables = 1" >> /etc/sysctl.d/k8s.conf
 fi`,
 		"sysctl -w net.ipv4.ip_forward=1",
-		"mount --make-rshared /",
-		"mount -t bpf bpf /sys/fs/bpf || true",
+		installNodeMountsUnit,
 		// Configure containerd with SystemdCgroup
 		"mkdir -p /etc/containerd",
 		"containerd config default > /etc/containerd/config.toml",
@@ -327,6 +326,30 @@ func waitForNodesReady(client *SSHClient, expectedNodes int, timeout time.Durati
 	return fmt.Errorf("timed out waiting for %d nodes to be Ready after %s", expectedNodes, timeout)
 }
 
+// installNodeMountsUnit installs and starts vmm-k8s-mounts.service, which
+// makes / a shared mount and mounts the BPF filesystem before containerd and
+// kubelet start. Cilium needs both; done once over SSH they were lost when a
+// node restarted, leaving its pods failing with "/sys/fs/bpf is mounted on
+// /sys but it is not a shared or slave mount".
+const installNodeMountsUnit = `cat <<'EOF' > /etc/systemd/system/vmm-k8s-mounts.service
+# VMM generated: mounts Kubernetes (Cilium) needs, redone at every boot
+[Unit]
+Description=Shared root and BPF filesystem mounts for Kubernetes
+DefaultDependencies=no
+After=local-fs.target
+Before=containerd.service kubelet.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/mount --make-rshared /
+ExecStart=/bin/sh -c 'mountpoint -q /sys/fs/bpf || mount -t bpf bpf /sys/fs/bpf'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload && systemctl enable --now vmm-k8s-mounts.service`
+
 type NodeInfo struct {
 	Name string
 	IP   string
@@ -346,13 +369,28 @@ func preparePreinstalledNode(client *SSHClient) error {
 sysctl -w net.bridge.bridge-nf-call-iptables=1 2>/dev/null || true
 sysctl -w net.bridge.bridge-nf-call-ip6tables=1 2>/dev/null || true
 fi`,
-		"mount --make-rshared /",
-		"mount -t bpf bpf /sys/fs/bpf || true",
+		installNodeMountsUnit,
 		"systemctl restart containerd",
 	}
 	for _, cmd := range commands {
 		if _, err := client.Run(cmd); err != nil {
 			return fmt.Errorf("prepare step failed: %w\nCommand: %s", err, cmd)
+		}
+	}
+	return nil
+}
+
+// checkNodesHaveKVM fails before Kubernetes is installed if a nested
+// cluster's nodes can't run VMs. vmm can't tell from a kernel file whether it
+// was built with KVM, and k8s-kernel releases only have it from v0.17.0's
+// profile on, so an older k8s-kernel boots fine but leaves the nodes without
+// /dev/kvm.
+func checkNodesHaveKVM(clients map[string]*SSHClient, nodes []NodeInfo, kernel string) error {
+	fmt.Println("Checking the nodes can run VMs (/dev/kvm)...")
+	for _, node := range nodes {
+		if _, err := clients[node.Name].Run("test -c /dev/kvm"); err != nil {
+			return fmt.Errorf("node %s has no /dev/kvm, so its kernel (%s) was built without KVM; "+
+				"get a current one with 'sudo vmm kernel pull k8s-kernel --force' and recreate the cluster", node.Name, kernel)
 		}
 	}
 	return nil
@@ -384,6 +422,12 @@ func ProvisionCluster(cl *Cluster, sshKeyPath string, nodes []NodeInfo) error {
 		defer client.Close()
 	}
 	fmt.Println("All VMs are SSH-accessible.")
+
+	if cl.Nested {
+		if err := checkNodesHaveKVM(clients, nodes, cl.Kernel); err != nil {
+			return err
+		}
+	}
 
 	// Check if kubeadm is pre-installed (k8s rootfs image)
 	preinstalled := checkKubeadmPreinstalled(clients[cpNode.Name])

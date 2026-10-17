@@ -74,7 +74,7 @@ Future work (P4 — significant effort, deferred):
 - `internal/snapshot/` — Full VM snapshots (guest memory + device state via Firecracker's snapshot API, plus a copy of the rootfs and mount images taken while the VM is paused). Restore is in-place: it rolls a VM back to one of its own snapshots, reusing the frozen IP/MAC/TAP identity. `snapshot.json` records the backend (`backend`, empty = Firecracker) and its version (`fc_version` key, kept for older snapshots); `Metadata.Compatible` refuses restores under a different backend and is checked before a running VM is stopped. Stored under `/var/lib/vmm/snapshots/<vm>/<name>/` (`memory`, `vmstate`, `rootfs.ext4`, `snapshot.json`). Snapshot primitives (`PauseVM`, `CreateSnapshotFiles`, `ResumeVM`, `RestoreVM`) are the `hypervisor.Snapshotter` interface, implemented in `internal/firecracker/client.go`.
 - `internal/upgrade/` — Release lookup, checksum-verified download/extract, atomic binary swap (`.prev` backups) and Firecracker install, used by `vmm upgrade` and the web UI's update notice (`internal/web/updates.go`)
 - `internal/sshkey/` — VMM-managed Ed25519 SSH key pair (auto-generated in `/var/lib/vmm/ssh/`)
-- `internal/cluster/` — Cluster management. `--type kubeadm` (default): multi-node Kubernetes via kubeadm with CNI selection (`--cni cilium` default, or `--cni calico` for Calico via Tigera operator). `--type openshift`: single-node OpenShift-derived cluster via upstream MicroShift (`internal/cluster/openshift.go`), installed on the base Ubuntu rootfs over SSH using OKD payload images (no Red Hat subscription). Admin workstation support for both.
+- `internal/cluster/` — Cluster management. `--type kubeadm` (default): multi-node Kubernetes via kubeadm with CNI selection (`--cni cilium` default, or `--cni calico` for Calico via Tigera operator). `--type openshift`: single-node OpenShift-derived cluster via upstream MicroShift (`internal/cluster/openshift.go`), installed on the base Ubuntu rootfs over SSH using OKD payload images (no Red Hat subscription). Admin workstation support for both. `--nested` (kubeadm only) runs the nodes nested under Cloud Hypervisor for Kata Containers/KubeVirt: `Cluster.Nested` + `Cluster.ConfigureNodeVM` set each node VM's backend (the admin workstation stays on Firecracker), `lifecycle.CheckNestedCluster` validates up front (needs a k8s kernel, never falls back to nested-kernel), and `checkNodesHaveKVM` fails provisioning before kubeadm if a node has no `/dev/kvm` (a k8s-kernel from before KVM was added to the k8s profile). Node prep installs `vmm-k8s-mounts.service` (rshared `/` + bpffs at every boot, before containerd/kubelet); without it Cilium broke on any node restart ("/sys/fs/bpf ... not a shared mount")
 - `internal/guestfile/` — SFTP access to a running VM's filesystem (list, download, atomic upload via temp file + rename), used by the web UI file browser
 - `internal/web/` — Web UI handlers, auth, SSE, WebSocket terminal, file browser (`handlers_files.go`)
 - `web/` — Embedded templates and static assets (`go:embed`)
@@ -100,7 +100,7 @@ vmm mount list|sync <name> [tag]
 vmm snapshot create <vm> <name> [--stop]|list [vm]|restore <vm> <name> [-f] [--no-start]|show <vm> <name>|delete <vm> <name>
 vmm image list [--remote]|pull [name]|import|snapshot|delete
 vmm kernel list [--remote]|pull <name>|import|delete|build [--profile default|k8s|nested|security|security-kasan]
-vmm cluster create <name> [--type kubeadm|openshift] [--cni cilium|calico] [--workers N] [--cpus N] [--memory MB] [--disk MB] [--k8s-version VER] [--openshift-version VER] [--ssh-key PATH] [--image NAME] [--kernel NAME] [--admin-workstation]
+vmm cluster create <name> [--type kubeadm|openshift] [--cni cilium|calico] [--workers N] [--cpus N] [--memory MB] [--disk MB] [--k8s-version VER] [--openshift-version VER] [--ssh-key PATH] [--image NAME] [--kernel NAME] [--admin-workstation] [--nested]
 vmm cluster delete|list|kubeconfig <name>
 vmm config show|init [--data-dir PATH]|set <key> <value>   # set supports: data_dir
 vmm upgrade [--check] [--version X] [-y] [--force] [--rollback] [--update-units] [--with-cloud-hypervisor]
@@ -136,10 +136,10 @@ Create flag defaults can be set in `~/.config/vmm/config.json` under `vm_default
 All profiles start from Firecracker's minimal CI config and layer options on top.
 
 - **`default`** — Minimal Firecracker config with Docker/K8s networking (BPF JIT, cgroups, namespaces, iptables/nftables, overlay FS). Used for standalone VMs (6.1 LTS).
-- **`k8s`** — Extends `default` with Datadog and eBPF observability support. Adds BTF (`CONFIG_DEBUG_INFO_BTF`, requires `dwarves` package for `pahole`), dynamic ftrace (`CONFIG_FUNCTION_TRACER`, `CONFIG_DYNAMIC_FTRACE`), kprobes/uprobes, perf events, traffic-control BPF, conntrack netlink, and securityfs. Build fails if any of the 22 mandatory options are missing after `olddefconfig`. Used for k8s clusters (6.6 LTS).
+- **`k8s`** — Extends `default` with Datadog and eBPF observability support, plus the shared nested-virtualization options (`add_nested_virt_options`: KVM, vhost-net/vsock, evdev + ACPI button, and the u32/mirred tc redirects Kata's default network model needs), so the same kernel serves Firecracker and nested (Cloud Hypervisor) cluster nodes. Adds BTF (`CONFIG_DEBUG_INFO_BTF`, requires `dwarves` package for `pahole`), dynamic ftrace (`CONFIG_FUNCTION_TRACER`, `CONFIG_DYNAMIC_FTRACE`), kprobes/uprobes, perf events, traffic-control BPF, conntrack netlink, and securityfs. Build fails if any of the 22 mandatory options are missing after `olddefconfig`. Used for k8s clusters (6.6 LTS).
 - **`security`** — Extends `default` with broad subsystem coverage for vulnerability research (IPsec, io_uring, SCTP, userfaultfd, AppArmor/SELinux, ftrace/kprobes, etc.). No BTF.
 - **`security-kasan`** — Extends `security` with KASAN memory sanitizer. Requires ~2x memory.
-- **`nested`** — Extends `default` with KVM (Intel + AMD) and vhost so the guest can run its own VMs, plus evdev and the ACPI button driver for Cloud Hypervisor's power button. Used for nested VMs; install it as `nested-kernel`.
+- **`nested`** — Extends `default` with the shared nested-virtualization options (`add_nested_virt_options`, checked via `NESTED_VIRT_REQUIRED`). Used for nested VMs; install it as `nested-kernel`.
 
 ## CI/CD
 
@@ -161,7 +161,7 @@ Static GitHub Pages site in `site/` (single `index.html` + `assets/`), deployed 
 ### Release Workflows
 
 - `release.yaml` — GoReleaser binary release on `v*` tags. Users upgrade with `sudo vmm upgrade`, which verifies against `checksums.txt`. To require a new Firecracker version, bump `FC_VERSION` in `scripts/install.sh`: both the installer and `vmm upgrade` (which reads it from the release tarball) use it. Cloud Hypervisor is pinned the same way with `CH_VERSION` plus `CH_SHA256_X86_64` (upstream publishes no checksums, so bump both: `sha256sum` the new `cloud-hypervisor-static` asset). It is optional: the installer adds it with `--with-cloud-hypervisor` and `vmm upgrade` with `--with-cloud-hypervisor`; both keep an existing install up to date and refuse a binary that doesn't match the pin. `TestCloudHypervisorFromInstaller` fails if the pin lines in `scripts/install.sh` stop parsing.
-- `build-kernel.yml` — kernel compilation (default, k8s, security, cifs-vuln variants). The k8s job requires `dwarves` for BTF generation.
+- `build-kernel.yml` — kernel compilation (default, k8s, nested, security, kasan, cifs-vuln variants). The k8s job requires `dwarves` for BTF generation. Jobs skip a kernel version that already has a release, so after a build profile change run it manually with `gh workflow run build-kernel.yml -f only=<variant> -f revision=N`, which publishes `<tag>-rN`; `vmm kernel pull` takes the newest release, so the rebuild replaces the original.
 - `build-rootfs.yml` / `build-k8s-rootfs.yml` / `build-security-rootfs.yml` — rootfs image builds
 
 ## Building

@@ -44,6 +44,7 @@ func clusterCreateCmd() *cobra.Command {
 	var imageName string
 	var kernelName string
 	var adminWorkstation bool
+	var nested bool
 	var distro string
 	var openshiftVersion string
 	var cni string
@@ -236,6 +237,14 @@ func clusterCreateCmd() *cobra.Command {
 				}
 			}
 
+			if nested {
+				if err := lifecycle.CheckNestedCluster(imgMgr, isOpenShift, kernelName); err != nil {
+					return err
+				}
+				cl.Nested = true
+				fmt.Println("Nodes will run nested under cloud-hypervisor")
+			}
+
 			// Set up admin workstation if requested, with its own key for SSH to the nodes
 			var adminPubKey string
 			if adminWorkstation {
@@ -292,6 +301,7 @@ func clusterCreateCmd() *cobra.Command {
 					newVM.SSHPublicKey = sshkey.JoinKeys(sshPubKey, adminPubKey)
 				}
 				newVM.SocketPath = fmt.Sprintf("%s/%s.sock", paths.Sockets, vmName)
+				cl.ConfigureNodeVM(newVM)
 
 				if err := newVM.Save(paths.VMs); err != nil {
 					return fmt.Errorf("failed to save VM '%s': %w", vmName, err)
@@ -386,6 +396,9 @@ func clusterCreateCmd() *cobra.Command {
 			}
 			fmt.Printf("  Control plane: %s\n", cl.ControlPlaneIP)
 			fmt.Printf("  Nodes: %d\n", len(cl.ClusterVMs()))
+			if cl.Nested {
+				fmt.Println("  Node backend: cloud-hypervisor (nested; nodes have /dev/kvm)")
+			}
 			fmt.Printf("  Context: vmm-%s\n", name)
 			if cl.AdminVM != "" {
 				fmt.Printf("  Admin workstation: %s (%s)\n", cl.AdminVM, adminIP)
@@ -409,6 +422,7 @@ func clusterCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&imageName, "image", "", "Name of rootfs image to use")
 	cmd.Flags().StringVar(&kernelName, "kernel", "", "Name of kernel to use")
 	cmd.Flags().StringVar(&cni, "cni", "cilium", "CNI plugin: 'cilium' (default) or 'calico'")
+	cmd.Flags().BoolVar(&nested, "nested", false, "Run the nodes nested under cloud-hypervisor so they can run VMs (e.g. Kata Containers); kubeadm only")
 	cmd.Flags().BoolVar(&adminWorkstation, "admin-workstation", false, "Create an admin workstation VM with security tools and cluster kubeconfig")
 	cmd.RegisterFlagCompletionFunc("kernel", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return completeKernelNames(cmd, nil, toComplete)

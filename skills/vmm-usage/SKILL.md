@@ -189,6 +189,7 @@ sudo vmm ssh lab -- 'ls -l /dev/kvm'
 - SSH, `vmm cp`, `sudo vmm console`, port forwards, `--mount`, `--dns` and autostart all work as for Firecracker VMs.
 - To run vmm *inside* a nested VM, set a different `subnet`/`gateway` (e.g. `172.17.0.0/16` / `172.17.0.1`) in the inner `~/.config/vmm/config.json` first — the default 172.16.0.0/16 clashes with the nested VM's own network.
 - `sudo vmm create plain --backend cloud-hypervisor` runs an ordinary (non-nested) VM under Cloud Hypervisor.
+- Whole clusters can be nested too (e.g. for Kata Containers): `sudo vmm cluster create lab --nested --workers 1 --cpus 4 --memory 8192`. See [references/kubernetes.md](references/kubernetes.md#nested-clusters-kata-containers).
 
 ### Differences from Firecracker VMs
 
