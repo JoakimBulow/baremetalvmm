@@ -37,7 +37,7 @@ Options:
                              Supported: 5.10, 5.15, 6.1, 6.6, 6.12, 6.18
   --name NAME                Name for the output kernel file (required)
   --config-profile PROFILE   Configuration profile (default: default)
-                             Profiles: default, k8s, security, security-kasan
+                             Profiles: default, k8s, nested, security, security-kasan
   --output DIR               Output directory (default: /var/lib/vmm/images/kernels)
   --no-cleanup               Keep build directory after completion
   --help                     Show this help message
@@ -46,6 +46,9 @@ Profiles:
   default         Minimal Firecracker config with Docker/K8s networking support
   k8s             Kubernetes profile with BTF, tracing, and traffic-control BPF
                   for Datadog and other eBPF-based observability agents
+  nested          Default profile + KVM, so the guest can run its own VMs.
+                  Needs a backend that exposes VMX/SVM (not Firecracker) and
+                  nested KVM enabled on the host
   security        Broad module coverage matching Ubuntu 24.04 for vulnerability
                   research and security testing (IPsec, SCTP, io_uring, etc.)
   security-kasan  Security profile + KASAN (Kernel Address Sanitizer) for
@@ -450,6 +453,47 @@ create_k8s_kernel_config() {
     fi
 }
 
+create_nested_kernel_config() {
+    local kernel_dir="$1"
+
+    log_info "Applying nested profile (KVM host support inside the guest)..."
+
+    cd "$kernel_dir"
+
+    create_kernel_config "$kernel_dir"
+
+    # --- KVM so the guest can be a hypervisor itself ---
+    ./scripts/config --enable CONFIG_VIRTUALIZATION
+    ./scripts/config --enable CONFIG_KVM
+    ./scripts/config --enable CONFIG_KVM_INTEL
+    ./scripts/config --enable CONFIG_KVM_AMD
+
+    # --- vhost for QEMU/Cloud Hypervisor networking inside the guest ---
+    ./scripts/config --enable CONFIG_VHOST_NET
+    ./scripts/config --enable CONFIG_VHOST_VSOCK
+
+    make olddefconfig
+
+    log_info "Nested profile applied — verifying mandatory options..."
+
+    local failed=false
+    for opt in \
+        CONFIG_VIRTUALIZATION CONFIG_KVM CONFIG_KVM_INTEL CONFIG_KVM_AMD \
+        CONFIG_PVH CONFIG_VIRTIO_PCI CONFIG_TUN CONFIG_BRIDGE; do
+        if grep -q "^${opt}=y" .config; then
+            log_info "  $opt: enabled"
+        else
+            log_error "  REQUIRED option missing: $opt"
+            failed=true
+        fi
+    done
+
+    if [ "$failed" = true ]; then
+        log_error "Nested kernel config is missing required options"
+        exit 1
+    fi
+}
+
 create_security_kernel_config() {
     local kernel_dir="$1"
 
@@ -768,10 +812,10 @@ if [ -z "$NAME" ]; then
 fi
 
 case "$CONFIG_PROFILE" in
-    default|k8s|security|security-kasan) ;;
+    default|k8s|nested|security|security-kasan) ;;
     *)
         log_error "Unknown config profile: $CONFIG_PROFILE"
-        log_info "Supported profiles: default, k8s, security, security-kasan"
+        log_info "Supported profiles: default, k8s, nested, security, security-kasan"
         exit 1
         ;;
 esac
@@ -799,6 +843,9 @@ KERNEL_DIR="$(download_kernel "$KERNEL_URL")"
 case "$CONFIG_PROFILE" in
     k8s)
         create_k8s_kernel_config "$KERNEL_DIR"
+        ;;
+    nested)
+        create_nested_kernel_config "$KERNEL_DIR"
         ;;
     security)
         create_security_kernel_config "$KERNEL_DIR"
