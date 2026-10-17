@@ -54,7 +54,7 @@ Cluster VMs follow a fixed naming pattern:
 - Control plane: `{cluster-name}-control-plane`
 - Workers: `{cluster-name}-worker-1`, `{cluster-name}-worker-2`, ...
 
-These VMs appear in `vmm list` alongside standalone VMs.
+These VMs appear in `sudo vmm list` alongside standalone VMs.
 
 ## Kubeconfig
 
@@ -79,7 +79,7 @@ kubectl --context vmm-mycluster get pods -A
 
 ## Troubleshooting
 
-- **Cluster creation fails at SSH**: VMs may not have booted yet. Check `vmm list` to verify VMs are running, then check `/var/lib/vmm/logs/<vm-name>.log`.
+- **Cluster creation fails at SSH**: VMs may not have booted yet. Check `sudo vmm list` to verify VMs are running, then check `/var/lib/vmm/logs/<vm-name>.log`.
 - **Cilium not starting**: Ensure `k8s-kernel` (6.6 LTS) is being used. The default 6.1 kernel lacks required BPF features.
 - **Node not joining**: SSH into the worker VM and check `journalctl -u kubelet` for errors.
 - **Cluster stuck in creating state**: If provisioning was interrupted, delete and recreate. Cluster state is in `/var/lib/vmm/clusters/<name>.json`.

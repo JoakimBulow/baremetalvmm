@@ -13,7 +13,7 @@ description: >
 
 # vmm — Bare Metal MicroVM Manager
 
-vmm manages Firecracker microVMs on Linux. VMs that need to run VMs of their own (nested virtualization) run under Cloud Hypervisor instead; see [Nested VMs](#nested-vms-vms-inside-vms). All VM operations require `sudo`. Read-only commands (`list`, `image list`, `kernel list`) work without sudo.
+vmm manages Firecracker microVMs on Linux. VMs that need to run VMs of their own (nested virtualization) run under Cloud Hypervisor instead; see [Nested VMs](#nested-vms-vms-inside-vms). Run every vmm command with `sudo`, including read-only ones like `list`: the data directory (`/var/lib/vmm`) is root-only, so without sudo they fail with "permission denied".
 
 ## Quick Reference
 
@@ -22,7 +22,7 @@ sudo vmm create <name> [--cpus N] [--memory MB] [--disk MB] [--ssh-key PATH] [--
 sudo vmm start <name>
 sudo vmm stop <name>
 sudo vmm delete <name> [-f]
-vmm list [-a]
+sudo vmm list [-a]
 sudo vmm ssh <name> [-u user]
 ```
 
@@ -59,18 +59,18 @@ sudo vmm delete myvm -f
 ### List VMs
 
 ```bash
-vmm list        # all VMs, including stopped ones (-a is on by default)
+sudo vmm list        # all VMs, including stopped ones (-a is on by default)
 ```
 
 ## Networking
 
 VMs get IPs from 172.16.0.0/16, allocated sequentially from 172.16.0.2. The host can reach VMs directly by IP. VMs have outbound internet via NAT.
 
-To find a VM's IP, use `vmm list` — the IP column shows each VM's address. The columns are `NAME ID STATE CPUs MEMORY IP BACKEND`, and MEMORY prints as two words (`512 MB`), so with awk the IP is field 7: `vmm list | awk '$1=="myvm" {print $7}'`.
+To find a VM's IP, use `sudo vmm list` — the IP column shows each VM's address. The columns are `NAME ID STATE CPUs MEMORY IP BACKEND`, and MEMORY prints as two words (`512 MB`), so with awk the IP is field 7: `sudo vmm list | awk '$1=="myvm" {print $7}'`.
 
 Additional networking features exist but are not covered in detail here:
 - **Port forwarding**: `sudo vmm port-forward add <name> <host-port>:<guest-port>`
-- **List port forwards**: `vmm port-forward list <name>`
+- **List port forwards**: `sudo vmm port-forward list <name>`
 - **Remove port forward**: `sudo vmm port-forward remove <name> <host-port>:<guest-port>`
 - **Custom DNS**: `--dns <server>` flag on create (repeatable)
 - **Host directory mounts**: `--mount /host/path:tag[:ro|rw]` flag on create
@@ -88,8 +88,8 @@ This downloads `vmlinux.bin` (Linux 6.1 LTS kernel) and `rootfs.ext4` (Ubuntu 24
 ### List available images and kernels
 
 ```bash
-vmm image list
-vmm kernel list
+sudo vmm image list
+sudo vmm kernel list
 ```
 
 ### Kernel variants
@@ -120,7 +120,7 @@ Use `--image <name>` on create to select a non-default rootfs (omit the `.ext4` 
 sudo vmm kernel build --version 6.6 --name my-custom-kernel
 ```
 
-This downloads and compiles a kernel with the specified version. Use `--name` to set the name it will be stored under, and `--profile` to pick a config profile (`default`, `k8s`, `nested`, `security`, `security-kasan`). The built kernel appears in `vmm kernel list`. Prefer `sudo vmm kernel pull <name>` when a pre-built release exists — building takes several minutes.
+This downloads and compiles a kernel with the specified version. Use `--name` to set the name it will be stored under, and `--profile` to pick a config profile (`default`, `k8s`, `nested`, `security`, `security-kasan`). The built kernel appears in `sudo vmm kernel list`. Prefer `sudo vmm kernel pull <name>` when a pre-built release exists — building takes several minutes.
 
 ### Import a kernel with force overwrite
 
@@ -169,7 +169,7 @@ Use a nested VM when the guest itself needs `/dev/kvm`: running Firecracker/QEMU
 ```bash
 cat /sys/module/kvm_intel/parameters/nested /sys/module/kvm_amd/parameters/nested 2>/dev/null   # want Y or 1
 command -v cloud-hypervisor            # installed by: install.sh --with-cloud-hypervisor, or sudo vmm upgrade --with-cloud-hypervisor
-vmm kernel list | grep nested-kernel   # if missing: sudo vmm kernel pull nested-kernel
+sudo vmm kernel list | grep nested-kernel   # if missing: sudo vmm kernel pull nested-kernel
 ```
 
 `vmm create --nested` checks all three and fails with a specific message if one is missing, so you can also just try it and act on the error. Enabling nested KVM on the host or installing Cloud Hypervisor changes the host — ask the user before doing either.
@@ -185,8 +185,8 @@ sudo vmm ssh lab -- 'ls -l /dev/kvm'
 
 - `--nested` implies `--backend cloud-hypervisor` and the `nested-kernel` kernel (unless `--kernel` is given; a kernel without KVM gives a guest with no `/dev/kvm`). `--backend firecracker --nested` is an error.
 - Give it 2 GB+ memory so it has room for its own guests. Nested guests are noticeably slower.
-- `vmm list` shows `cloud-hypervisor+nested` in the BACKEND column.
-- SSH, `vmm cp`, `vmm console`, port forwards, `--mount`, `--dns` and autostart all work as for Firecracker VMs.
+- `sudo vmm list` shows `cloud-hypervisor+nested` in the BACKEND column.
+- SSH, `vmm cp`, `sudo vmm console`, port forwards, `--mount`, `--dns` and autostart all work as for Firecracker VMs.
 - To run vmm *inside* a nested VM, set a different `subnet`/`gateway` (e.g. `172.17.0.0/16` / `172.17.0.1`) in the inner `~/.config/vmm/config.json` first — the default 172.16.0.0/16 clashes with the nested VM's own network.
 - `sudo vmm create plain --backend cloud-hypervisor` runs an ordinary (non-nested) VM under Cloud Hypervisor.
 
@@ -194,7 +194,7 @@ sudo vmm ssh lab -- 'ls -l /dev/kvm'
 
 - **No memory snapshots**: `vmm snapshot create` is refused for Cloud Hypervisor VMs. `vmm image snapshot` (rootfs only) still works.
 - **Stop**: a clean ACPI power-off, usually under a second with `nested-kernel`. With other kernels the guest ignores the power button and is stopped with SIGTERM after ~3 seconds.
-- **Logs**: `/var/lib/vmm/logs/<name>.log` holds Cloud Hypervisor's own output (check it if start fails); the serial console is in `vmm console <name> --full` as usual.
+- **Logs**: `/var/lib/vmm/logs/<name>.log` holds Cloud Hypervisor's own output (check it if start fails); the serial console is in `sudo vmm console <name> --full` as usual.
 - The backend is fixed at create time.
 
 ## Kubernetes Clusters
@@ -245,7 +245,7 @@ sudo vmm ssh myvm -- 'systemctl status ssh'
 ### Wait for VM to be reachable
 
 ```bash
-VM_IP=$(vmm list | awk '$1=="myvm" {print $7}')
+VM_IP=$(sudo vmm list | awk '$1=="myvm" {print $7}')
 until ping -c1 -W1 "$VM_IP" &>/dev/null; do sleep 1; done
 ```
 
@@ -301,7 +301,7 @@ Your key is added alongside the VMM-managed key. Both can be used to access the 
 - VMs are persistent across reboots if the systemd service is installed.
 - VM configs are stored in `/var/lib/vmm/vms/<name>.json`.
 - Hypervisor logs (Firecracker or Cloud Hypervisor) are in `/var/lib/vmm/logs/<name>.log` — check these if a VM fails to start.
-- `vmm console <name>` follows the log until interrupted; use `vmm console <name> --full` in scripts or it will hang.
+- `sudo vmm console <name>` follows the log until interrupted; use `sudo vmm console <name> --full` in scripts or it will hang.
 - VM names must be unique. Attempting to create a duplicate name will fail.
 - Disk size is set at creation time and cannot be changed later.
 - VMM auto-manages an Ed25519 SSH key pair — `--ssh-key` is optional and adds your key alongside the managed one.

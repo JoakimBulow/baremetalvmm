@@ -112,7 +112,7 @@ A nested VM has `/dev/kvm`, so it can run VMs of its own (Firecracker, QEMU, Kat
 sudo vmm kernel pull nested-kernel     # the installer does this with --with-cloud-hypervisor
 sudo vmm create lab --nested --cpus 2 --memory 2048
 sudo vmm start lab
-vmm ssh lab -- ls -l /dev/kvm
+sudo vmm ssh lab -- ls -l /dev/kvm
 ```
 
 See [Nested Virtualization](docs/nested-virtualization.md) for setup, how it works and its limitations (no memory snapshots yet).

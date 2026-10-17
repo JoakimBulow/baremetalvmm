@@ -54,14 +54,14 @@ sudo vmm kernel build --version 6.1 --name nested-kernel --profile nested
 ```bash
 sudo vmm create lab --nested --cpus 2 --memory 2048 --disk 8192
 sudo vmm start lab
-vmm ssh lab -- ls -l /dev/kvm
+sudo vmm ssh lab -- ls -l /dev/kvm
 ```
 
 `--nested` selects Cloud Hypervisor and, unless you pass `--kernel`, the `nested-kernel` kernel. vmm checks the host before creating the VM, so a missing binary, missing kernel or disabled nested KVM is reported straight away.
 
 Everything else works as it does for Firecracker VMs: SSH, `vmm cp`, `vmm console`, port forwards, host directory mounts, DNS settings, autostart and the web terminal and file browser.
 
-`vmm list` shows each VM's backend in its last column:
+`sudo vmm list` shows each VM's backend in its last column:
 
 ```
 NAME   ID        STATE    CPUs  MEMORY   IP ADDRESS  BACKEND
