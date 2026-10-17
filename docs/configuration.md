@@ -5,8 +5,10 @@
 VMM stores its configuration at `~/.config/vmm/config.json`. Initialize it with:
 
 ```bash
-vmm config init
+sudo vmm config init
 ```
+
+It needs sudo because it also creates the data directories, and under sudo it still writes your own `~/.config/vmm/config.json`, not root's.
 
 ## Data Directory
 

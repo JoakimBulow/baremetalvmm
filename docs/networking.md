@@ -121,7 +121,7 @@ The mount format is: `/host/path:tag[:ro|rw]`
 ### Accessing Mounts in the VM
 
 ```bash
-vmm ssh myvm
+sudo vmm ssh myvm
 # Inside the VM:
 ls /mnt/code
 ```
@@ -141,7 +141,7 @@ sudo vmm start myvm
 ### Listing Mounts
 
 ```bash
-vmm mount list myvm
+sudo vmm mount list myvm
 # Output:
 # Mounts for VM 'myvm':
 #   code: /home/user/code -> /mnt/code (ro) [/dev/vdb]

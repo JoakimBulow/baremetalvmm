@@ -1,12 +1,14 @@
 # CLI Command Reference
 
+Run vmm commands with `sudo`. The data directory (`/var/lib/vmm`) is root-only, so commands that read or change VMs, images, kernels or clusters fail with "permission denied" without it, including read-only ones like `vmm list`. The exceptions are `vmm version`, `vmm upgrade --check`, `vmm config show` and `vmm completion`. `vmm config init` needs sudo too, since it creates the data directories; it still writes your own `~/.config/vmm/config.json`. The tables below leave `sudo` out for brevity.
+
 ## VM Lifecycle
 
 | Command | Description |
 |---------|-------------|
 | `vmm create <name>` | Create a new VM configuration (VM is not running yet) |
-| `vmm start <name>` | Start a VM - assigns IP address, sets up networking, boots VM (requires root) |
-| `vmm stop <name>` | Stop a running VM (requires root) |
+| `vmm start <name>` | Start a VM - assigns IP address, sets up networking, boots VM |
+| `vmm stop <name>` | Stop a running VM |
 | `vmm delete <name>` | Delete a VM and its resources |
 | `vmm list` | List all VMs |
 | `vmm set <name> autostart on\|off` | Choose whether the VM starts at boot (via `vmm.service`; new VMs default to on) |

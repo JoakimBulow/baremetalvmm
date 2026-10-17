@@ -10,7 +10,7 @@ sudo vmm console <name>                   # Tail + follow console output live
 ip link show vmm-br0                       # Bridge
 sudo iptables -t nat -L -n -v             # NAT rules
 ps aux | grep -E 'firecracker|cloud-hypervisor'   # Processes
-vmm ssh myvm -- 'getent hosts google.com'  # DNS from VM
+sudo vmm ssh myvm -- 'getent hosts google.com'  # DNS from VM
 ```
 
 ## KVM Not Available
@@ -91,4 +91,4 @@ ls -la /var/lib/vmm/sockets/
 
 ## VM Shows as Stopped When Running
 
-Ensure you're checking with `vmm list` (no sudo required). The tool correctly detects running VMs even when run as non-root.
+Check with `sudo vmm list`. Without sudo, vmm can't read its data directory (`/var/lib/vmm` is root-only) and fails with "permission denied". A VM's state comes from its hypervisor process, not its socket file, so a VM whose process is alive is reported as running even if the socket has gone missing.

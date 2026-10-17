@@ -5,7 +5,7 @@
 VMM ships with two kernels and two root filesystems, each designed for a specific use case. The `vmm image list` command shows all available options with descriptions:
 
 ```
-$ vmm image list
+$ sudo vmm image list
 Kernels:
   - k8s-kernel             32.4 MB  Kubernetes cluster kernel (Linux 6.6 LTS, Cilium/BPF)
   - security-kernel        85.2 MB  Security testing kernel (Linux 6.12 LTS, broad module coverage)
@@ -47,7 +47,7 @@ When adding new kernel or rootfs variants, use an appropriate prefix so that the
 Use `--remote` on the list commands to see what kernels and rootfs images are available on GitHub releases, along with whether each is already downloaded locally:
 
 ```bash
-$ vmm kernel list --remote
+$ sudo vmm kernel list --remote
 Querying GitHub releases...
 Available kernels on GitHub:
   ✓ security-kernel       Security testing kernel (security-kernel-6.6.143, broad module coverage)
@@ -57,7 +57,7 @@ Available kernels on GitHub:
 
   ✓ = already downloaded
 
-$ vmm image list --remote
+$ sudo vmm image list --remote
 Querying GitHub releases...
 Available rootfs images on GitHub:
   ✓ rootfs                Ubuntu 24.04 base rootfs (rootfs-24.04-20260629)
@@ -126,7 +126,7 @@ sudo vmm create template --cpus 2 --memory 1024 --ssh-key ~/.ssh/id_ed25519.pub
 sudo vmm start template
 
 # SSH in and install your tools
-vmm ssh template
+sudo vmm ssh template
 # root@template:~# apt-get install -y python3 nodejs git
 # root@template:~# exit
 
@@ -217,7 +217,7 @@ The build script downloads kernel source from kernel.org, applies Firecracker's 
 ```bash
 sudo vmm create myvm --kernel kernel-6.1 --ssh-key ~/.ssh/id_ed25519.pub
 sudo vmm start myvm
-vmm ssh myvm -- uname -r
+sudo vmm ssh myvm -- uname -r
 ```
 
 ### Deleting a Kernel

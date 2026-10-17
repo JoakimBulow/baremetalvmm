@@ -65,8 +65,8 @@ kubectl get nodes
 You can also SSH into individual nodes for debugging:
 
 ```bash
-vmm ssh mycluster-control-plane
-vmm ssh mycluster-worker-1
+sudo vmm ssh mycluster-control-plane
+sudo vmm ssh mycluster-worker-1
 ```
 
 ## Create Options
@@ -96,7 +96,7 @@ You can optionally attach an **admin workstation** VM to a cluster. This is a se
 sudo vmm cluster create mycluster --workers 2 --admin-workstation
 
 # SSH into the admin workstation
-vmm ssh mycluster-admin
+sudo vmm ssh mycluster-admin
 
 # kubectl is pre-configured
 root@mycluster-admin:~# kubectl get nodes

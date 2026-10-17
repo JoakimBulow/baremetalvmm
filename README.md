@@ -68,7 +68,7 @@ The installer already downloads the default images. To write a config file or ke
 
 ```bash
 # Initialize config
-vmm config init
+sudo vmm config init
 
 # (Optional) store VM data somewhere other than the default /var/lib/vmm
 sudo vmm config init --data-dir /srv/vmm-data
