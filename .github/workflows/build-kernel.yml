@@ -13,6 +13,10 @@ on:
         default: 'all'
         type: choice
         options: [all, default, nested, k8s, security, kasan, cifs-vuln]
+      revision:
+        description: 'Rebuild an already-released kernel version, e.g. 2 publishes <tag>-r2 (after a build profile change)'
+        required: false
+        default: ''
   push:
     paths:
       - 'scripts/build-kernel.sh'
@@ -25,6 +29,11 @@ on:
 
 permissions:
   contents: write
+
+env:
+  # Empty unless a manual run asks for a revision. vmm kernel pull takes the
+  # newest release for each kernel, so a -rN rebuild replaces the original.
+  TAG_SUFFIX: ${{ github.event.inputs.revision && format('-r{0}', github.event.inputs.revision) || '' }}
 
 jobs:
   build-default:
@@ -56,7 +65,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="kernel-${{ steps.kernel_version.outputs.version }}"
+          TAG="kernel-${{ steps.kernel_version.outputs.version }}${TAG_SUFFIX}"
           if gh release view "$TAG" &>/dev/null; then
             echo "Release $TAG already exists, skipping build"
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -90,7 +99,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="kernel-${{ steps.kernel_version.outputs.version }}"
+          TAG="kernel-${{ steps.kernel_version.outputs.version }}${TAG_SUFFIX}"
           TITLE="Default VM Kernel ${{ steps.kernel_version.outputs.version }} (Linux ${KERNEL_SERIES} LTS)"
           NOTES="Firecracker-compatible Linux kernel ${{ steps.kernel_version.outputs.version }} for general-purpose VMs.
 
@@ -151,7 +160,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="security-kernel-${{ steps.kernel_version.outputs.version }}"
+          TAG="security-kernel-${{ steps.kernel_version.outputs.version }}${TAG_SUFFIX}"
           if gh release view "$TAG" &>/dev/null; then
             echo "Release $TAG already exists, skipping build"
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -186,7 +195,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="security-kernel-${{ steps.kernel_version.outputs.version }}"
+          TAG="security-kernel-${{ steps.kernel_version.outputs.version }}${TAG_SUFFIX}"
           TITLE="Security Testing Kernel ${{ steps.kernel_version.outputs.version }} (Linux ${KERNEL_SERIES} LTS, broad module coverage)"
           NOTES="Firecracker-compatible Linux kernel ${{ steps.kernel_version.outputs.version }} for security testing and vulnerability research.
 
@@ -269,7 +278,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="kasan-kernel-${{ steps.kernel_version.outputs.version }}"
+          TAG="kasan-kernel-${{ steps.kernel_version.outputs.version }}${TAG_SUFFIX}"
           if gh release view "$TAG" &>/dev/null; then
             echo "Release $TAG already exists, skipping build"
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -304,7 +313,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="kasan-kernel-${{ steps.kernel_version.outputs.version }}"
+          TAG="kasan-kernel-${{ steps.kernel_version.outputs.version }}${TAG_SUFFIX}"
           TITLE="KASAN Security Kernel ${{ steps.kernel_version.outputs.version }} (Linux ${KERNEL_SERIES} LTS, memory sanitizer)"
           NOTES="Firecracker-compatible Linux kernel ${{ steps.kernel_version.outputs.version }} with KASAN (Kernel Address Sanitizer) enabled for vulnerability research.
 
@@ -372,7 +381,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="cifs-vuln-kernel-${{ steps.kernel_version.outputs.version }}"
+          TAG="cifs-vuln-kernel-${{ steps.kernel_version.outputs.version }}${TAG_SUFFIX}"
           if gh release view "$TAG" &>/dev/null; then
             echo "Release $TAG already exists, skipping build"
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -447,7 +456,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="cifs-vuln-kernel-${{ steps.kernel_version.outputs.version }}"
+          TAG="cifs-vuln-kernel-${{ steps.kernel_version.outputs.version }}${TAG_SUFFIX}"
           TITLE="CIFS Vuln Testing Kernel ${{ steps.kernel_version.outputs.version }} (CVE-2026-46243, Linux ${KERNEL_SERIES} LTS)"
           NOTES="Firecracker-compatible Linux kernel ${{ steps.kernel_version.outputs.version }} with CVE-2026-46243 fix **intentionally reverted** for vulnerability testing.
 
@@ -507,7 +516,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="k8s-kernel-${{ steps.kernel_version.outputs.version }}"
+          TAG="k8s-kernel-${{ steps.kernel_version.outputs.version }}${TAG_SUFFIX}"
           if gh release view "$TAG" &>/dev/null; then
             echo "Release $TAG already exists, skipping build"
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -542,7 +551,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="k8s-kernel-${{ steps.kernel_version.outputs.version }}"
+          TAG="k8s-kernel-${{ steps.kernel_version.outputs.version }}${TAG_SUFFIX}"
           TITLE="Kubernetes VM Kernel ${{ steps.kernel_version.outputs.version }} (Linux ${KERNEL_SERIES} LTS, BTF/BPF/Datadog)"
           NOTES="Firecracker-compatible Linux kernel ${{ steps.kernel_version.outputs.version }} for Kubernetes clusters with eBPF observability support.
 
@@ -605,7 +614,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="nested-kernel-${{ steps.kernel_version.outputs.version }}"
+          TAG="nested-kernel-${{ steps.kernel_version.outputs.version }}${TAG_SUFFIX}"
           if gh release view "$TAG" &>/dev/null; then
             echo "Release $TAG already exists, skipping build"
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -640,7 +649,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="nested-kernel-${{ steps.kernel_version.outputs.version }}"
+          TAG="nested-kernel-${{ steps.kernel_version.outputs.version }}${TAG_SUFFIX}"
           TITLE="Nested Virtualization Kernel ${{ steps.kernel_version.outputs.version }} (Linux ${KERNEL_SERIES} LTS, KVM)"
           NOTES="Linux kernel ${{ steps.kernel_version.outputs.version }} for nested VMs: guests that run their own VMs.
 

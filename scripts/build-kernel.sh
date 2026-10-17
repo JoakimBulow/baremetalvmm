@@ -45,7 +45,8 @@ Options:
 Profiles:
   default         Minimal Firecracker config with Docker/K8s networking support
   k8s             Kubernetes profile with BTF, tracing, and traffic-control BPF
-                  for Datadog and other eBPF-based observability agents
+                  for Datadog and other eBPF-based observability agents, plus
+                  KVM for nested clusters (cluster create --nested)
   nested          Default profile + KVM, so the guest can run its own VMs.
                   Needs a backend that exposes VMX/SVM (not Firecracker) and
                   nested KVM enabled on the host
@@ -369,6 +370,43 @@ create_kernel_config() {
     done
 }
 
+# Options a guest needs to run VMs of its own under Cloud Hypervisor: KVM,
+# vhost and tc redirects (for hypervisors and Kata inside the guest) and the
+# ACPI power button, which the guest's vmm-powerbutton.service reads through
+# evdev so Cloud Hypervisor can shut it down cleanly. Used by the nested and
+# k8s profiles; under Firecracker they are simply unused.
+NESTED_VIRT_REQUIRED="CONFIG_VIRTUALIZATION CONFIG_KVM CONFIG_KVM_INTEL CONFIG_KVM_AMD \
+    CONFIG_VHOST_NET CONFIG_VHOST_VSOCK CONFIG_INPUT_EVDEV CONFIG_ACPI_BUTTON \
+    CONFIG_PVH CONFIG_VIRTIO_PCI \
+    CONFIG_NET_SCH_INGRESS CONFIG_NET_CLS_ACT CONFIG_NET_CLS_U32 CONFIG_NET_ACT_MIRRED"
+
+add_nested_virt_options() {
+    # --- KVM so the guest can be a hypervisor itself ---
+    ./scripts/config --enable CONFIG_VIRTUALIZATION
+    ./scripts/config --enable CONFIG_KVM
+    ./scripts/config --enable CONFIG_KVM_INTEL
+    ./scripts/config --enable CONFIG_KVM_AMD
+
+    # --- ACPI power button, so Cloud Hypervisor can shut the guest down ---
+    ./scripts/config --enable CONFIG_INPUT
+    ./scripts/config --enable CONFIG_INPUT_EVDEV
+    ./scripts/config --enable CONFIG_ACPI_BUTTON
+
+    # --- vhost for QEMU/Cloud Hypervisor/Kata networking and vsock inside the guest ---
+    ./scripts/config --enable CONFIG_VHOST_NET
+    ./scripts/config --enable CONFIG_VHOST_VSOCK
+
+    # --- Traffic control for Kata Containers' default "tcfilter" network
+    # model, which redirects between the pod's veth and the VM's tap with an
+    # ingress qdisc, a u32 filter and a mirred action ---
+    ./scripts/config --enable CONFIG_NET_SCHED
+    ./scripts/config --enable CONFIG_NET_SCH_INGRESS
+    ./scripts/config --enable CONFIG_NET_CLS
+    ./scripts/config --enable CONFIG_NET_CLS_ACT
+    ./scripts/config --enable CONFIG_NET_CLS_U32
+    ./scripts/config --enable CONFIG_NET_ACT_MIRRED
+}
+
 create_k8s_kernel_config() {
     local kernel_dir="$1"
 
@@ -423,6 +461,10 @@ create_k8s_kernel_config() {
     # --- Kernel config/headers access for diagnostics ---
     ./scripts/config --enable CONFIG_IKHEADERS
 
+    # --- Nested virtualization, for cluster nodes under Cloud Hypervisor
+    # (vmm cluster create --nested), e.g. to run Kata Containers ---
+    add_nested_virt_options
+
     # Resolve dependencies
     make olddefconfig
 
@@ -438,7 +480,7 @@ create_k8s_kernel_config() {
         CONFIG_TRACING CONFIG_DEBUG_INFO_BTF CONFIG_DEBUG_FS \
         CONFIG_NF_CT_NETLINK \
         CONFIG_NET_CLS_BPF CONFIG_NET_ACT_BPF CONFIG_SECURITYFS \
-        CONFIG_CFS_BANDWIDTH CONFIG_CGROUPS; do
+        CONFIG_CFS_BANDWIDTH CONFIG_CGROUPS $NESTED_VIRT_REQUIRED; do
         if grep -q "^${opt}=y" .config; then
             log_info "  $opt: enabled"
         else
@@ -462,31 +504,14 @@ create_nested_kernel_config() {
 
     create_kernel_config "$kernel_dir"
 
-    # --- KVM so the guest can be a hypervisor itself ---
-    ./scripts/config --enable CONFIG_VIRTUALIZATION
-    ./scripts/config --enable CONFIG_KVM
-    ./scripts/config --enable CONFIG_KVM_INTEL
-    ./scripts/config --enable CONFIG_KVM_AMD
-
-    # --- ACPI power button, so Cloud Hypervisor can shut the guest down ---
-    # The guest's vmm-powerbutton.service reads the button's evdev device.
-    ./scripts/config --enable CONFIG_INPUT
-    ./scripts/config --enable CONFIG_INPUT_EVDEV
-    ./scripts/config --enable CONFIG_ACPI_BUTTON
-
-    # --- vhost for QEMU/Cloud Hypervisor networking inside the guest ---
-    ./scripts/config --enable CONFIG_VHOST_NET
-    ./scripts/config --enable CONFIG_VHOST_VSOCK
+    add_nested_virt_options
 
     make olddefconfig
 
     log_info "Nested profile applied — verifying mandatory options..."
 
     local failed=false
-    for opt in \
-        CONFIG_VIRTUALIZATION CONFIG_KVM CONFIG_KVM_INTEL CONFIG_KVM_AMD \
-        CONFIG_PVH CONFIG_VIRTIO_PCI CONFIG_TUN CONFIG_BRIDGE \
-        CONFIG_INPUT_EVDEV CONFIG_ACPI_BUTTON; do
+    for opt in $NESTED_VIRT_REQUIRED CONFIG_TUN CONFIG_BRIDGE; do
         if grep -q "^${opt}=y" .config; then
             log_info "  $opt: enabled"
         else
