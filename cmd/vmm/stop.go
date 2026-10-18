@@ -74,5 +74,7 @@ func finishStop(netMgr *network.Manager, v *vm.VM) {
 
 	// Cleanup (Terminate already cleared the PID and removed the socket)
 	v.State = vm.StateStopped
-	v.Save(cfg.GetPaths().VMs)
+	if err := v.Save(cfg.GetPaths().VMs); err != nil {
+		fmt.Printf("Warning: failed to save VM state: %v\n", err)
+	}
 }

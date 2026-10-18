@@ -149,7 +149,9 @@ func stopVMsParallel(vmsDir string, names []string) []string {
 		}
 		fmt.Printf("Stopping VM '%s'...\n", vmName)
 		v.State = vm.StateStopping
-		v.Save(vmsDir)
+		if err := v.Save(vmsDir); err != nil {
+			fmt.Printf("Warning: failed to save VM state: %v\n", err)
+		}
 		running = append(running, v)
 	}
 
