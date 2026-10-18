@@ -91,24 +91,32 @@ func clusterCreateCmd() *cobra.Command {
 				sshKeyPath = defaults.SSHKeyPath
 			}
 
-			var sshPrivateKeyPath string
-			var useVMMKey bool
-			if sshKeyPath == "" {
+			// --ssh-key names a public key, which is added to the nodes
+			// alongside the managed key. Its private half, if it sits next
+			// to it, provisions the cluster; otherwise the managed key does.
+			var sshPrivateKeyPath, sshPubKeyPath string
+			if sshKeyPath != "" {
+				sshKeyPath = expandHomePath(sshKeyPath)
+				if strings.HasSuffix(sshKeyPath, ".pub") {
+					sshPubKeyPath = sshKeyPath
+					sshPrivateKeyPath = strings.TrimSuffix(sshKeyPath, ".pub")
+				} else {
+					sshPubKeyPath = sshKeyPath + ".pub"
+					sshPrivateKeyPath = sshKeyPath
+				}
+				if _, err := os.Stat(sshPubKeyPath); err != nil {
+					return fmt.Errorf("SSH public key not found at %s: %w", sshPubKeyPath, err)
+				}
+				if _, err := os.Stat(sshPrivateKeyPath); err != nil {
+					sshPrivateKeyPath = ""
+				}
+			}
+			if sshPrivateKeyPath == "" {
 				if err := sshkey.EnsureKeyPair(paths.SSH); err != nil {
 					return fmt.Errorf("failed to ensure vmm SSH key: %w", err)
 				}
 				sshPrivateKeyPath = sshkey.PrivateKeyPath(paths.SSH)
-				useVMMKey = true
 				fmt.Println("Using vmm-managed SSH key for cluster provisioning")
-			} else {
-				sshKeyPath = expandHomePath(sshKeyPath)
-				sshPrivateKeyPath = sshKeyPath
-				if len(sshKeyPath) > 4 && sshKeyPath[len(sshKeyPath)-4:] == ".pub" {
-					sshPrivateKeyPath = sshKeyPath[:len(sshKeyPath)-4]
-				}
-				if _, err := os.Stat(sshPrivateKeyPath); err != nil {
-					return fmt.Errorf("SSH private key not found at %s: %w", sshPrivateKeyPath, err)
-				}
 			}
 
 			// OpenShift (MicroShift) is single-node and needs a heavier control plane.
@@ -178,10 +186,10 @@ func clusterCreateCmd() *cobra.Command {
 
 			// Read SSH public key (if user provided one)
 			var sshPubKey string
-			if !useVMMKey {
-				keyData, err := os.ReadFile(sshKeyPath)
+			if sshPubKeyPath != "" {
+				keyData, err := os.ReadFile(sshPubKeyPath)
 				if err != nil {
-					return fmt.Errorf("failed to read SSH public key from %s: %w", sshKeyPath, err)
+					return fmt.Errorf("failed to read SSH public key from %s: %w", sshPubKeyPath, err)
 				}
 				sshPubKey = string(keyData)
 			}
@@ -418,7 +426,7 @@ func clusterCreateCmd() *cobra.Command {
 	cmd.Flags().IntVar(&disk, "disk", 10240, "Disk per node in MB")
 	cmd.Flags().StringVar(&k8sVersion, "k8s-version", "1.36.0", "Kubernetes version (kubeadm only)")
 	cmd.Flags().StringVar(&openshiftVersion, "openshift-version", "4.20", "OpenShift/MicroShift major.minor version (openshift only)")
-	cmd.Flags().StringVar(&sshKeyPath, "ssh-key", "", "Path to SSH public key file")
+	cmd.Flags().StringVar(&sshKeyPath, "ssh-key", "", "Path to SSH public key to add to the nodes (its private key, if present, is used for provisioning)")
 	cmd.Flags().StringVar(&imageName, "image", "", "Name of rootfs image to use")
 	cmd.Flags().StringVar(&kernelName, "kernel", "", "Name of kernel to use")
 	cmd.Flags().StringVar(&cni, "cni", "cilium", "CNI plugin: 'cilium' (default) or 'calico'")

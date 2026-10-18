@@ -10,7 +10,7 @@ A Kubernetes-compatible kernel (`k8s-kernel`) is downloaded automatically during
 sudo vmm kernel build --version 6.6 --name k8s-kernel
 ```
 
-VMM auto-generates an Ed25519 SSH key pair at `/var/lib/vmm/ssh/vmm_ed25519` and uses it for cluster provisioning (running kubeadm over SSH) when no `--ssh-key` is provided. You can optionally pass your own key with `--ssh-key`, which is added alongside the managed key.
+VMM auto-generates an Ed25519 SSH key pair at `/var/lib/vmm/ssh/vmm_ed25519` and uses it for cluster provisioning (running kubeadm over SSH) when no `--ssh-key` is provided. You can optionally pass your own public key with `--ssh-key`, which is added to the nodes alongside the managed key. If its private key sits next to it (`~/.ssh/id_ed25519` for `~/.ssh/id_ed25519.pub`), vmm provisions with that; otherwise it provisions with the managed key.
 
 If your SSH key has a passphrase, make sure it's loaded in ssh-agent and use `sudo -E` to preserve the agent socket:
 

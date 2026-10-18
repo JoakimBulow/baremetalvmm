@@ -152,6 +152,12 @@ export_docker_image() {
 
     docker export "$CONTAINER_ID" | tar -xf - -C "$export_dir"
 
+    # docker export always adds /.dockerenv. Left in the image, it makes
+    # systemd-detect-virt report "docker" inside the VM, so systemd skips
+    # container-unsafe setup (securityfs is not mounted) and AppArmor refuses
+    # to start.
+    rm -f "$export_dir/.dockerenv"
+
     docker rm "$CONTAINER_ID" >/dev/null
     CONTAINER_ID=""
 

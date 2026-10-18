@@ -45,7 +45,7 @@ vmm cluster kubeconfig mycluster
 sudo vmm cluster delete mycluster -f
 ```
 
-`--ssh-key` is optional. When omitted, the VMM-managed Ed25519 key (`/var/lib/vmm/ssh/vmm_ed25519`) is used for cluster provisioning (kubeadm over SSH). If you provide a key, it is added alongside the managed key.
+`--ssh-key` is optional. When omitted, the VMM-managed Ed25519 key (`/var/lib/vmm/ssh/vmm_ed25519`) is used for cluster provisioning (kubeadm over SSH). If you provide a public key, it is added to the nodes alongside the managed key, and its private half is used for provisioning when it sits next to it (otherwise the managed key is).
 
 ## VM Naming Convention
 

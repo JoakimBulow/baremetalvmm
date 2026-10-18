@@ -221,7 +221,7 @@ kubectl --context vmm-mycluster get nodes
 sudo vmm cluster delete mycluster -f
 ```
 
-`--ssh-key` is optional for clusters too — the VMM-managed key is used for cluster provisioning (kubeadm over SSH) by default. If `k8s-kernel` is available locally, it is auto-selected for clusters.
+`--ssh-key` is optional for clusters too — the VMM-managed key is used for cluster provisioning (kubeadm over SSH) by default. A public key passed with `--ssh-key` is added to the nodes; its private half provisions the cluster only if it sits next to the `.pub` file. If `k8s-kernel` is available locally, it is auto-selected for clusters.
 
 ## Common Patterns for Agents
 

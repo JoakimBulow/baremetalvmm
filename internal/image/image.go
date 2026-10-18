@@ -74,6 +74,7 @@ func (m *Manager) ImportDockerImage(dockerImage, imageName string, sizeMB int) e
 	if err := tarCmd.Wait(); err != nil {
 		return fmt.Errorf("failed to extract export: %w", err)
 	}
+	removeContainerMarkers(exportDir)
 
 	// Step 2: Install systemd and SSH if not present
 	fmt.Println("  Configuring rootfs for Firecracker...")
@@ -357,6 +358,16 @@ func containerEngine() (string, error) {
 		}
 	}
 	return "", errors.New("image import needs docker or podman, and neither was found in PATH")
+}
+
+// removeContainerMarkers deletes the files docker (/.dockerenv) and podman
+// (/run/.containerenv) add to every exported container. Left in a rootfs they
+// make systemd-detect-virt report a container inside the VM, so systemd skips
+// container-unsafe setup such as mounting securityfs, and AppArmor won't start.
+func removeContainerMarkers(rootfsDir string) {
+	for _, marker := range []string{".dockerenv", "run/.containerenv"} {
+		os.Remove(filepath.Join(rootfsDir, marker))
+	}
 }
 
 // runCmdOutput runs a command and returns its output
@@ -1116,6 +1127,8 @@ var DefaultDNSServers = []string{"8.8.8.8", "8.8.4.4", "1.1.1.1"}
 // InjectDNSConfig injects DNS configuration into a rootfs image
 // This mounts the ext4 image and writes /etc/resolv.conf
 // If dnsServers is empty, default public DNS servers are used
+// It also removes container markers (see removeContainerMarkers) that images
+// built before v0.17.1 still carry, since every start mounts the rootfs here.
 func InjectDNSConfig(rootfsPath string, dnsServers []string) error {
 	// Use defaults if no custom servers specified
 	if len(dnsServers) == 0 {
@@ -1153,6 +1166,7 @@ func InjectDNSConfig(rootfsPath string, dnsServers []string) error {
 		return fmt.Errorf("failed to write resolv.conf: %w", err)
 	}
 
+	removeContainerMarkers(mountPoint)
 	return nil
 }
 

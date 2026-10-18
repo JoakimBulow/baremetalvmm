@@ -168,3 +168,27 @@ func TestInstallPowerButtonService(t *testing.T) {
 		t.Errorf("unit not enabled: %v", err)
 	}
 }
+
+func TestRemoveContainerMarkers(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "run"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{".dockerenv", "run/.containerenv", "keep"} {
+		if err := os.WriteFile(filepath.Join(dir, f), nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	removeContainerMarkers(dir)
+	removeContainerMarkers(dir) // missing markers are not an error
+
+	for _, f := range []string{".dockerenv", "run/.containerenv"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); !os.IsNotExist(err) {
+			t.Errorf("%s still present (err=%v)", f, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "keep")); err != nil {
+		t.Errorf("unrelated file removed: %v", err)
+	}
+}
