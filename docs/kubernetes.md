@@ -129,6 +129,15 @@ The admin workstation is also available as a checkbox in the web UI cluster crea
 
 When a cluster has an admin workstation, vmm generates a key pair just for that cluster (`/var/lib/vmm/ssh/clusters/{cluster}_ed25519`). The public key is added to the cluster nodes' authorized keys, so it's re-injected every time a node starts. The private key is copied to the workstation at `/root/.ssh/vmm_cluster_ed25519`, and `/etc/ssh/ssh_config.d/vmm-cluster.conf` maps each node name and IP to it. The key only works on that cluster's nodes, not on other VMs on the host, and it's deleted along with the cluster.
 
+## Stopping and Starting a Cluster
+
+```bash
+sudo vmm cluster stop mycluster    # workers (and admin workstation) first, then the control plane
+sudo vmm cluster start mycluster   # control plane first, then waits for the nodes
+```
+
+`cluster start` waits until each node it started has posted a fresh Ready status. Until the kubelets report, the API server still serves the Ready status recorded before the cluster stopped, so `kubectl wait --for=condition=Ready` can pass too early after a restart. Use `--no-wait` to return as soon as the VMs are up.
+
 ## Deleting a Cluster
 
 ```bash

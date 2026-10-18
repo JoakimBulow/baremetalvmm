@@ -217,6 +217,10 @@ sudo vmm cluster create mycluster --workers 2 --cpus 4 --memory 8192 --k8s-versi
 # Use the cluster
 kubectl --context vmm-mycluster get nodes
 
+# Stop and start (workers stop first; start waits for every node to report Ready)
+sudo vmm cluster stop mycluster
+sudo vmm cluster start mycluster
+
 # Delete
 sudo vmm cluster delete mycluster -f
 ```

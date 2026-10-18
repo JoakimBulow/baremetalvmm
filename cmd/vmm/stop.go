@@ -52,22 +52,27 @@ func stopCmd() *cobra.Command {
 				return fmt.Errorf("failed to stop VM '%s': %w", name, err)
 			}
 
-			// Clean up TAP device so it can be reused on next start
-			netMgr := network.NewManager(cfg.BridgeName, cfg.Subnet, cfg.Gateway, cfg.HostInterface)
-			if existingVM.TapDevice != "" && netMgr.TapExists(existingVM.TapDevice) {
-				if err := netMgr.DeleteTap(existingVM.TapDevice); err != nil {
-					fmt.Printf("Warning: failed to delete TAP device: %v\n", err)
-				}
-			}
-
-			clearPortForwards(netMgr, existingVM)
-
-			// Cleanup (Terminate already cleared the PID and removed the socket)
-			existingVM.State = vm.StateStopped
-			existingVM.Save(paths.VMs)
+			finishStop(network.NewManager(cfg.BridgeName, cfg.Subnet, cfg.Gateway, cfg.HostInterface), existingVM)
 
 			fmt.Printf("VM '%s' stopped\n", name)
 			return nil
 		},
 	}
+}
+
+// finishStop tidies up after a VM's hypervisor process has been terminated:
+// it removes the TAP device and port forwards and saves the VM as stopped.
+func finishStop(netMgr *network.Manager, v *vm.VM) {
+	// Clean up TAP device so it can be reused on next start
+	if v.TapDevice != "" && netMgr.TapExists(v.TapDevice) {
+		if err := netMgr.DeleteTap(v.TapDevice); err != nil {
+			fmt.Printf("Warning: failed to delete TAP device: %v\n", err)
+		}
+	}
+
+	clearPortForwards(netMgr, v)
+
+	// Cleanup (Terminate already cleared the PID and removed the socket)
+	v.State = vm.StateStopped
+	v.Save(cfg.GetPaths().VMs)
 }

@@ -102,6 +102,7 @@ vmm image list [--remote]|pull [name]|import|snapshot|delete
 vmm kernel list [--remote]|pull <name>|import|delete|build [--profile default|k8s|nested|security|security-kasan]
 vmm cluster create <name> [--type kubeadm|openshift] [--cni cilium|calico] [--workers N] [--cpus N] [--memory MB] [--disk MB] [--k8s-version VER] [--openshift-version VER] [--ssh-key PATH] [--image NAME] [--kernel NAME] [--admin-workstation] [--nested]
 vmm cluster delete|list|kubeconfig <name>
+vmm cluster start <name> [--no-wait] [--timeout DUR]|stop <name>
 vmm config show|init [--data-dir PATH]|set <key> <value>   # set supports: data_dir
 vmm upgrade [--check] [--version X] [-y] [--force] [--rollback] [--update-units] [--with-cloud-hypervisor]
 vmm version [--json]

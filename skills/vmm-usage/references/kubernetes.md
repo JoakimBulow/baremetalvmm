@@ -41,6 +41,11 @@ vmm cluster list
 # Extract kubeconfig (also merges into ~/.kube/config)
 vmm cluster kubeconfig mycluster
 
+# Stop / start a cluster (start waits for fresh node Ready status;
+# a plain `kubectl wait` right after a restart can pass on stale status)
+sudo vmm cluster stop mycluster
+sudo vmm cluster start mycluster
+
 # Delete cluster and all its VMs
 sudo vmm cluster delete mycluster -f
 ```

@@ -28,6 +28,8 @@ func clusterCmd() *cobra.Command {
 	cmd.AddCommand(
 		clusterCreateCmd(),
 		clusterDeleteCmd(),
+		clusterStartCmd(),
+		clusterStopCmd(),
 		clusterListCmd(),
 		clusterKubeconfigCmd(),
 	)
@@ -636,14 +638,7 @@ func clusterKubeconfigCmd() *cobra.Command {
 				return fmt.Errorf("cluster '%s' has no control plane IP (not yet started?)", name)
 			}
 
-			// Resolve SSH private key path
-			sshPrivateKeyPath := cl.SSHKeyPath
-			if len(sshPrivateKeyPath) > 4 && sshPrivateKeyPath[len(sshPrivateKeyPath)-4:] == ".pub" {
-				sshPrivateKeyPath = sshPrivateKeyPath[:len(sshPrivateKeyPath)-4]
-			}
-			sshPrivateKeyPath = expandHomePath(sshPrivateKeyPath)
-
-			cpClient, err := cluster.WaitForSSH(cl.ControlPlaneIP, sshPrivateKeyPath, 30*time.Second)
+			cpClient, err := cluster.WaitForSSH(cl.ControlPlaneIP, clusterSSHKeyPath(cl), 30*time.Second)
 			if err != nil {
 				return fmt.Errorf("failed to connect to control plane: %w", err)
 			}
