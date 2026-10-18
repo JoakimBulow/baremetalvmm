@@ -41,16 +41,13 @@ func kernelCmd() *cobra.Command {
 						fmt.Println("Available kernels on GitHub:")
 						found = true
 					}
-					status := "  "
-					if r.Downloaded {
-						status = "✓ "
-					}
+					status := releaseStatus(r)
 					fmt.Printf("  %s%-20s  %s  [%s]\n", status, r.LocalName, r.Description, r.Tag)
 				}
 				if !found {
 					fmt.Println("No kernel releases found on GitHub.")
 				} else {
-					fmt.Println("\n  ✓ = already downloaded")
+					fmt.Println("\n  ✓ = already downloaded, ↑ = newer release than the local copy (pull with --force)")
 					fmt.Println("  Use 'vmm kernel pull <name>' to download a kernel")
 				}
 				return nil
@@ -77,6 +74,7 @@ func kernelCmd() *cobra.Command {
 				fmt.Printf("  - %-20s %6.1f MB  %s%s\n", k.Name, sizeMB, k.Description, defaultMarker)
 			}
 
+			printArtifactUpdates(imgMgr, "kernel")
 			return nil
 		},
 	}

@@ -85,6 +85,22 @@ sudo vmm kernel pull security-kernel --force
 
 Without arguments, `vmm image pull` downloads the default kernel and rootfs if they are not already present (backward-compatible behavior).
 
+The security and KASAN kernels are released for several LTS series. `security-kernel` and `kasan-kernel` are the 6.12 builds; the other series pull as `security-kernel-<series>` and `kasan-kernel-<series>` (e.g. `sudo vmm kernel pull kasan-kernel-5.10`).
+
+### Keeping Downloads Up to Date
+
+Kernels are re-released when their build profile changes (`k8s-kernel-6.6.159-r3`), and k8s rootfs images are rebuilt in place. `vmm kernel list` and `vmm image list` end with any newer releases of what you have locally, and the commands to fetch them:
+
+```
+Newer releases available:
+  k8s-kernel           k8s-kernel-6.6.159-r3 (published 2026-10-18)
+                         sudo vmm kernel pull k8s-kernel --force
+  k8s-1.36.2           k8s-rootfs-1.36.5 (published 2026-10-18)
+                         sudo vmm image pull k8s-1.36.5
+```
+
+In `--remote` listings, `↑` marks a release newer than the local copy. The web UI shows the same list on the Images page, with Update buttons, and a count in the sidebar. A local file counts as out of date when the release was published after it was written. The GitHub release list is cached for 12 hours by the CLI (15 minutes on the Images page) to stay inside GitHub's unauthenticated API limit. Set `VMM_NO_UPDATE_CHECK=1` to turn the checks off.
+
 ## Custom Rootfs from Docker
 
 VMM can import Docker images as VM root filesystems. The import process exports the container filesystem, installs systemd/openssh-server/networking tools, configures it for Firecracker, and creates an ext4 filesystem image.

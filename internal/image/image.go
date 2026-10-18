@@ -426,8 +426,9 @@ type ghRelease struct {
 
 // ghAsset represents a GitHub release asset
 type ghAsset struct {
-	Name               string `json:"name"`
-	BrowserDownloadURL string `json:"browser_download_url"`
+	Name               string    `json:"name"`
+	BrowserDownloadURL string    `json:"browser_download_url"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // findLatestKernelURL queries GitHub releases for the latest kernel-* release
@@ -1390,6 +1391,11 @@ type AvailableRelease struct {
 	Type        string // "kernel" or "rootfs"
 	Description string
 	Downloaded  bool // whether already present locally
+	// Published is when the release asset was last uploaded. Kernels are
+	// re-released as -rN and k8s rootfs images replaced in place.
+	Published time.Time
+	// Outdated is set when the local copy predates Published.
+	Outdated bool
 }
 
 // fetchReleases returns the project's GitHub releases, newest first.
@@ -1430,13 +1436,28 @@ func (m *Manager) ListAvailableReleases() ([]AvailableRelease, error) {
 	if err != nil {
 		return nil, err
 	}
+	m.saveReleaseCache(releases)
+	return m.availableReleases(releases), nil
+}
 
+// availableReleases picks the newest downloadable release of each kernel
+// and rootfs (each k8s minor version for k8s rootfs) and compares it with
+// the local copy.
+func (m *Manager) availableReleases(releases []ghRelease) []AvailableRelease {
 	type releaseSpec struct {
 		prefix    string
 		asset     string
 		localName string
 		typ       string
 		descFn    func(string) string
+	}
+
+	// Kernels released for several LTS series: this series gets the
+	// spec's local name, the others <local name>-<series>, as their
+	// release notes name them.
+	defaultSeries := map[string]string{
+		"security-kernel-": "6.12",
+		"kasan-kernel-":    "6.12",
 	}
 
 	specs := []releaseSpec{
@@ -1470,14 +1491,27 @@ func (m *Manager) ListAvailableReleases() ([]AvailableRelease, error) {
 			if !strings.HasPrefix(rel.TagName, spec.prefix) {
 				continue
 			}
-			if spec.localName != "" && seen[spec.prefix] {
+			// The newest release of each artifact (each series of a
+			// multi-series kernel) wins; releases are newest first.
+			seenKey := spec.prefix
+			localName := spec.localName
+			if def, ok := defaultSeries[spec.prefix]; ok {
+				series := kernelSeries(strings.TrimPrefix(rel.TagName, spec.prefix))
+				if series == "" {
+					continue
+				}
+				seenKey += series
+				if series != def {
+					localName += "-" + series
+				}
+			}
+			if localName != "" && seen[seenKey] {
 				continue
 			}
 			for _, asset := range rel.Assets {
 				if asset.Name != spec.asset {
 					continue
 				}
-				localName := spec.localName
 				if localName == "" && spec.prefix == "k8s-rootfs-" {
 					version := strings.TrimPrefix(rel.TagName, "k8s-rootfs-")
 					localName = "k8s-" + version
@@ -1492,12 +1526,7 @@ func (m *Manager) ListAvailableReleases() ([]AvailableRelease, error) {
 					}
 				}
 
-				downloaded := false
-				if spec.typ == "kernel" {
-					downloaded = m.KernelExists(localName)
-				} else {
-					downloaded = m.ImageExists(localName)
-				}
+				localTime, downloaded := m.localModTime(spec.typ, localName)
 
 				result = append(result, AvailableRelease{
 					Tag:         rel.TagName,
@@ -1507,13 +1536,25 @@ func (m *Manager) ListAvailableReleases() ([]AvailableRelease, error) {
 					Type:        spec.typ,
 					Description: spec.descFn(rel.TagName),
 					Downloaded:  downloaded,
+					Published:   asset.UpdatedAt,
+					Outdated:    downloaded && localTime.Before(asset.UpdatedAt),
 				})
-				seen[spec.prefix] = true
+				seen[seenKey] = true
 			}
 		}
 	}
 
-	return result, nil
+	return result
+}
+
+// kernelSeries returns the LTS series of a kernel release version
+// ("6.12.113-r3" -> "6.12"), or "".
+func kernelSeries(version string) string {
+	parts := strings.SplitN(version, ".", 3)
+	if len(parts) < 3 {
+		return ""
+	}
+	return parts[0] + "." + parts[1]
 }
 
 // FindReleaseURL looks up a release download URL by tag and asset type (kernel or rootfs).
@@ -1747,7 +1788,7 @@ func (m *Manager) ListKernelsWithInfo() ([]KernelInfo, error) {
 
 	var kernels []KernelInfo
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 

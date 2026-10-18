@@ -10,6 +10,37 @@
 </header>
 
 <div class="stack">
+    {{if .Updates}}
+    <section class="panel" id="updates">
+        <div class="panel-head">
+            <div><span class="hw">local / updates</span><h2>Updates available</h2></div>
+            <span class="muted xsmall mono">vmm kernel|image pull &lt;name&gt; --force</span>
+        </div>
+        <div class="table-wrap">
+            <table class="ledger">
+                <thead><tr><th>Local</th><th>Newer release</th><th>Published</th><th class="right">Actions</th></tr></thead>
+                <tbody>
+                    {{range .Updates}}
+                    <tr>
+                        <td><span class="id-name">{{.Local}}</span></td>
+                        <td class="data">{{.Release.Tag}}</td>
+                        <td class="muted">{{.Release.Published.Format "2006-01-02"}}</td>
+                        <td class="right">
+                            <form method="POST" action="/images/{{if eq .Release.Type "kernel"}}kernels{{else}}rootfs{{end}}/download" class="download-form row-actions">
+                                <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                                <input type="hidden" name="local_name" value="{{.Release.LocalName}}">
+                                <input type="hidden" name="tag" value="{{.Release.Tag}}">
+                                <button type="submit" class="btn btn-sm download-btn">{{if eq .Local .Release.LocalName}}Update{{else}}Download{{end}}</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+    </section>
+    {{end}}
+
     <section class="panel">
         <div class="panel-head">
             <div><span class="hw">local / kernels</span><h2>Kernels</h2></div>
@@ -118,14 +149,14 @@
                         <td class="muted wrap">{{.Description}}</td>
                         <td>{{.LocalName}}</td>
                         <td class="right">
-                            {{if .Downloaded}}
+                            {{if and .Downloaded (not .Outdated)}}
                             <span class="chip chip-running"><span class="dot"></span>installed</span>
                             {{else}}
                             <form method="POST" action="/images/kernels/download" class="download-form row-actions">
                                 <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
                                 <input type="hidden" name="local_name" value="{{.LocalName}}">
                                 <input type="hidden" name="tag" value="{{.Tag}}">
-                                <button type="submit" class="btn btn-sm download-btn">Download</button>
+                                <button type="submit" class="btn btn-sm download-btn">{{if .Outdated}}Update{{else}}Download{{end}}</button>
                             </form>
                             {{end}}
                         </td>
@@ -153,14 +184,14 @@
                         <td class="muted wrap">{{.Description}}</td>
                         <td>{{.LocalName}}</td>
                         <td class="right">
-                            {{if .Downloaded}}
+                            {{if and .Downloaded (not .Outdated)}}
                             <span class="chip chip-running"><span class="dot"></span>installed</span>
                             {{else}}
                             <form method="POST" action="/images/rootfs/download" class="download-form row-actions">
                                 <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
                                 <input type="hidden" name="local_name" value="{{.LocalName}}">
                                 <input type="hidden" name="tag" value="{{.Tag}}">
-                                <button type="submit" class="btn btn-sm download-btn">Download</button>
+                                <button type="submit" class="btn btn-sm download-btn">{{if .Outdated}}Update{{else}}Download{{end}}</button>
                             </form>
                             {{end}}
                         </td>

@@ -34,3 +34,20 @@ func TestUpdateAvailable(t *testing.T) {
 		t.Fatalf("failed check should report nothing, got %+v", got)
 	}
 }
+
+func TestArtifactUpdates(t *testing.T) {
+	u := newUpdateChecker("0.17.1")
+	if got := u.artifactUpdates(); got != 0 {
+		t.Fatalf("before any check: %d", got)
+	}
+	u.checkArtifacts() // no counter set: a no-op
+	u.artifacts = func() int { return 3 }
+	u.checkArtifacts()
+	if got := u.artifactUpdates(); got != 3 {
+		t.Fatalf("after check: %d, want 3", got)
+	}
+	u.setArtifactCount(0)
+	if got := u.artifactUpdates(); got != 0 {
+		t.Fatalf("after reset: %d, want 0", got)
+	}
+}
