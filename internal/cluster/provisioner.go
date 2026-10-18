@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -481,7 +482,7 @@ func ProvisionCluster(cl *Cluster, sshKeyPath string, nodes []NodeInfo) error {
 
 		// Install kubeadm on all nodes in parallel
 		if cl.K8sVersion == "" {
-			return fmt.Errorf("the image has no Kubernetes installed; give an exact Kubernetes version to install")
+			return errors.New("the image has no Kubernetes installed; give an exact Kubernetes version to install")
 		}
 		fmt.Printf("Installing kubeadm %s on all nodes...\n", cl.K8sVersion)
 		if err := runOnAllNodes(clients, nodes, func(c *SSHClient, name string) error {

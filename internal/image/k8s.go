@@ -157,7 +157,7 @@ func parseK8sVersion(v string) []int {
 // compareK8sVersions compares two exact versions like strings.Compare.
 func compareK8sVersions(a, b string) int {
 	pa, pb := parseK8sVersion(a), parseK8sVersion(b)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if pa[i] != pb[i] {
 			if pa[i] < pb[i] {
 				return -1
