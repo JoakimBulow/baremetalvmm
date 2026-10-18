@@ -641,12 +641,11 @@ func (s *Server) handleAPIClusterCreate(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	} else {
-		if req.K8sVersion == "" {
-			req.K8sVersion = "1.36.0"
-		}
-		if err := validate.K8sVersion(req.K8sVersion); err != nil {
-			jsonError(w, err.Error(), http.StatusBadRequest)
-			return
+		if req.K8sVersion != "" {
+			if err := validate.K8sVersionOrMinor(req.K8sVersion); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 		}
 		if req.MemoryMB < 2048 {
 			jsonError(w, "Kubernetes requires at least 2048 MB memory", http.StatusBadRequest)
@@ -683,17 +682,23 @@ func (s *Server) handleAPIClusterCreate(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	} else {
-		cl.Image = req.Image
 		if req.Kernel == "" {
 			if imgMgr.KernelExists("k8s-kernel") {
 				cl.Kernel = "k8s-kernel"
 			}
 		}
-		if req.Image == "" {
-			if found := imgMgr.FindK8sRootfs(req.K8sVersion); found != "" {
-				cl.Image = found
-			}
+		if req.Image != "" && !imgMgr.ImageExists(req.Image) {
+			jsonError(w, fmt.Sprintf("image '%s' not found", req.Image), http.StatusBadRequest)
+			return
 		}
+		// The image and Kubernetes version must agree: pick one from the other.
+		chosen, version, err := cluster.ChooseK8sImage(imgMgr, req.Image, req.K8sVersion)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cl.Image = chosen
+		cl.K8sVersion = version
 	}
 
 	if req.Nested {

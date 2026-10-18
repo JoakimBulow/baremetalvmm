@@ -162,8 +162,10 @@ func clusterCreateCmd() *cobra.Command {
 					return fmt.Errorf("OpenShift requires at least 10240 MB disk (got %d)", disk)
 				}
 			} else {
-				if err := validate.K8sVersion(k8sVersion); err != nil {
-					return err
+				if k8sVersion != "" {
+					if err := validate.K8sVersionOrMinor(k8sVersion); err != nil {
+						return err
+					}
 				}
 				if cpus < 2 {
 					return fmt.Errorf("Kubernetes requires at least 2 CPUs (got %d)", cpus)
@@ -230,21 +232,17 @@ func clusterCreateCmd() *cobra.Command {
 					}
 				}
 
-				// Auto-detect k8s rootfs if no image specified
-				if imageName == "" {
-					if found := imgMgr.FindK8sRootfs(k8sVersion); found != "" {
-						fmt.Printf("Using pre-built Kubernetes rootfs: %s\n", found)
-						imageName = found
-						cl.Image = imageName
-					} else {
-						downloaded, err := imgMgr.DownloadK8sRootfs(k8sVersion)
-						if err == nil && downloaded != "" {
-							fmt.Printf("Using downloaded Kubernetes rootfs: %s\n", downloaded)
-							imageName = downloaded
-							cl.Image = imageName
-						}
-					}
+				// The image and Kubernetes version must agree: pick one from the other.
+				chosen, version, err := cluster.ChooseK8sImage(imgMgr, imageName, k8sVersion)
+				if err != nil {
+					return err
 				}
+				if imageName == "" && chosen != "" {
+					fmt.Printf("Using pre-built Kubernetes rootfs: %s\n", chosen)
+				}
+				imageName = chosen
+				cl.Image = chosen
+				cl.K8sVersion = version
 			}
 
 			if nested {
@@ -279,8 +277,12 @@ func clusterCreateCmd() *cobra.Command {
 			if isOpenShift {
 				fmt.Printf("Creating OpenShift cluster '%s' (MicroShift %s, single-node)\n", name, openshiftVersion)
 			} else {
+				version := cl.K8sVersion
+				if version == "" {
+					version = "(from image)"
+				}
 				fmt.Printf("Creating cluster '%s' with Kubernetes %s (%d control-plane + %d workers)\n",
-					name, k8sVersion, 1, workers)
+					name, version, 1, workers)
 			}
 
 			// Create all VMs (cluster nodes + admin if enabled)
@@ -426,7 +428,7 @@ func clusterCreateCmd() *cobra.Command {
 	cmd.Flags().IntVar(&cpus, "cpus", 2, "CPUs per node")
 	cmd.Flags().IntVar(&memory, "memory", 4096, "Memory per node in MB")
 	cmd.Flags().IntVar(&disk, "disk", 10240, "Disk per node in MB")
-	cmd.Flags().StringVar(&k8sVersion, "k8s-version", "1.36.0", "Kubernetes version (kubeadm only)")
+	cmd.Flags().StringVar(&k8sVersion, "k8s-version", "", "Kubernetes version (kubeadm only): exact (1.36.5), or MAJOR.MINOR for its newest patch (default: newest "+cluster.DefaultK8sMinor+" patch, or the version of --image)")
 	cmd.Flags().StringVar(&openshiftVersion, "openshift-version", "4.20", "OpenShift/MicroShift major.minor version (openshift only)")
 	cmd.Flags().StringVar(&sshKeyPath, "ssh-key", "", "Path to SSH public key to add to the nodes (its private key, if present, is used for provisioning)")
 	cmd.Flags().StringVar(&imageName, "image", "", "Name of rootfs image to use")

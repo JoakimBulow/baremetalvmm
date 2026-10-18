@@ -12,7 +12,7 @@
 | CPUs per node | 2 | `--cpus N` |
 | Memory per node | 4096 MB | `--memory MB` |
 | Disk per node | 10240 MB | `--disk MB` |
-| Kubernetes version | 1.36.0 | `--k8s-version VER` |
+| Kubernetes version | newest 1.36 patch | `--k8s-version VER` (exact, or MAJOR.MINOR for its newest patch; `--image k8s-X.Y.Z` implies X.Y.Z) |
 
 ## Kernel and Rootfs Requirements
 
@@ -30,7 +30,7 @@ sudo vmm cluster create dev
 sudo vmm cluster create prod --workers 2 --cpus 4 --memory 8192
 
 # Explicitly specify kernel, image, and K8s version
-sudo vmm cluster create prod --kernel k8s-kernel --image k8s-1.36.0 --workers 2 --k8s-version 1.36.0
+sudo vmm cluster create prod --kernel k8s-kernel --image k8s-1.36.5 --workers 2
 
 # Use a custom SSH key for cluster provisioning
 sudo vmm cluster create dev --ssh-key ~/.ssh/id_ed25519.pub

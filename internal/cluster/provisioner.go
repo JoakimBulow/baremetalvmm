@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/raesene/baremetalvmm/internal/validate"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -360,6 +361,19 @@ func checkKubeadmPreinstalled(client *SSHClient) bool {
 	return err == nil
 }
 
+// installedKubeadmVersion returns the version of the node's kubeadm, e.g. 1.36.5.
+func installedKubeadmVersion(client *SSHClient) (string, error) {
+	out, err := client.Run("kubeadm version -o short")
+	if err != nil {
+		return "", fmt.Errorf("failed to read the image's kubeadm version: %w", err)
+	}
+	v := strings.TrimPrefix(strings.TrimSpace(out), "v")
+	if err := validate.K8sVersion(v); err != nil {
+		return "", fmt.Errorf("unexpected kubeadm version %q: %w", out, err)
+	}
+	return v, nil
+}
+
 func preparePreinstalledNode(client *SSHClient) error {
 	commands := []string{
 		"modprobe overlay 2>/dev/null || true",
@@ -434,6 +448,18 @@ func ProvisionCluster(cl *Cluster, sshKeyPath string, nodes []NodeInfo) error {
 
 	if preinstalled {
 		fmt.Println("Kubernetes components detected in rootfs image, skipping installation.")
+		// kubeadm init must match the installed kubelet, so the image's
+		// kubeadm decides the version.
+		installed, err := installedKubeadmVersion(clients[cpNode.Name])
+		if err != nil {
+			return err
+		}
+		if installed != cl.K8sVersion {
+			if cl.K8sVersion != "" {
+				fmt.Printf("Image has Kubernetes %s, not %s; using %s.\n", installed, cl.K8sVersion, installed)
+			}
+			cl.K8sVersion = installed
+		}
 		fmt.Println("Preparing nodes...")
 		if err := runOnAllNodes(clients, nodes, func(c *SSHClient, name string) error {
 			fmt.Printf("  Preparing %s...\n", name)
@@ -454,6 +480,9 @@ func ProvisionCluster(cl *Cluster, sshKeyPath string, nodes []NodeInfo) error {
 		fmt.Println("Containerd installed on all nodes.")
 
 		// Install kubeadm on all nodes in parallel
+		if cl.K8sVersion == "" {
+			return fmt.Errorf("the image has no Kubernetes installed; give an exact Kubernetes version to install")
+		}
 		fmt.Printf("Installing kubeadm %s on all nodes...\n", cl.K8sVersion)
 		if err := runOnAllNodes(clients, nodes, func(c *SSHClient, name string) error {
 			fmt.Printf("  Installing kubeadm on %s...\n", name)

@@ -82,6 +82,17 @@ func K8sVersion(version string) error {
 	return nil
 }
 
+var k8sMinorRe = regexp.MustCompile(`^[0-9]+\.[0-9]{1,2}$`)
+
+// K8sVersionOrMinor accepts an exact version (1.36.5) or a minor (1.36),
+// which means its newest patch.
+func K8sVersionOrMinor(version string) error {
+	if k8sMinorRe.MatchString(version) || k8sVersionRe.MatchString(version) {
+		return nil
+	}
+	return fmt.Errorf("invalid Kubernetes version %q: must be MAJOR.MINOR.PATCH (e.g., 1.36.5) or MAJOR.MINOR for its newest patch", version)
+}
+
 func CNI(cni string) error {
 	switch cni {
 	case "cilium", "calico":
