@@ -11,6 +11,11 @@ on:
         description: 'Docker base image (e.g. ubuntu:24.04)'
         required: false
         default: 'ubuntu:24.04'
+      replace:
+        description: 'Rebuild versions that already have a release and replace their image (after a build script change)'
+        required: false
+        default: false
+        type: boolean
   push:
     paths:
       - 'scripts/build-k8s-rootfs.sh'
@@ -100,6 +105,12 @@ jobs:
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
           if gh release view "$TAG" &>/dev/null; then
+            if [ "${{ github.event.inputs.replace }}" = "true" ]; then
+              echo "Release $TAG already exists, rebuilding to replace its image"
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+              echo "replace=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             echo "Release $TAG already exists, skipping build"
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
@@ -138,9 +149,10 @@ jobs:
           Pre-configured with:
           - systemd init system
           - OpenSSH server (root key-only login)
-          - containerd (SystemdCgroup enabled)
+          - containerd (SystemdCgroup enabled), crictl
           - kubeadm, kubelet, kubectl $K8S_VERSION
-          - iproute2, iputils-ping, dbus, kmod
+          - AppArmor userspace (active on the k8s-kernel), lvm2 and thin-provisioning-tools for the devmapper snapshotter
+          - iproute2, iputils-ping, dbus, kmod, jq
           - Serial console on ttyS0
           - systemd-networkd
           - Kubernetes sysctl and module configuration
@@ -159,8 +171,13 @@ jobs:
 
           Built from \`$BASE_IMAGE\` by GitHub Actions using \`scripts/build-k8s-rootfs.sh\`."
 
-          gh release create "$TAG" \
-            --title "$TITLE" \
-            --notes "$NOTES" \
-            k8s-rootfs.ext4.gz \
-            k8s-rootfs.ext4.gz.sha256
+          if [ "${{ steps.check_release.outputs.replace }}" = "true" ]; then
+            gh release upload "$TAG" --clobber k8s-rootfs.ext4.gz k8s-rootfs.ext4.gz.sha256
+            gh release edit "$TAG" --notes "$NOTES"
+          else
+            gh release create "$TAG" \
+              --title "$TITLE" \
+              --notes "$NOTES" \
+              k8s-rootfs.ext4.gz \
+              k8s-rootfs.ext4.gz.sha256
+          fi
