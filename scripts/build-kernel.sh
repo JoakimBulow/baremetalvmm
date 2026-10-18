@@ -420,6 +420,50 @@ add_nested_virt_options() {
     ./scripts/config --enable CONFIG_NET_ACT_MIRRED
 }
 
+# Device-mapper thin provisioning, for LVM thin pools and containerd's
+# devmapper snapshotter (which Kata's Firecracker shim needs, as Firecracker
+# has no shared filesystem). Built in: VMs have no /lib/modules.
+CONTAINER_STORAGE_REQUIRED="CONFIG_BLK_DEV_DM CONFIG_DM_THIN_PROVISIONING"
+
+add_container_storage_options() {
+    ./scripts/config --enable CONFIG_MD
+    ./scripts/config --enable CONFIG_BLK_DEV_DM
+    ./scripts/config --enable CONFIG_DM_THIN_PROVISIONING
+}
+
+# AppArmor as the active LSM, in Ubuntu's order, so containerd applies
+# cri-containerd.apparmor.d to runc containers as on an Ubuntu node.
+# SELinux and AppArmor are exclusive and the first one listed in CONFIG_LSM
+# wins, so enabling AppArmor alone isn't enough. vmm boots images that have
+# no apparmor_parser with apparmor=0, since containerd and Docker can't run
+# containers on an AppArmor kernel without it.
+UBUNTU_LSM="landlock,lockdown,yama,integrity,apparmor,bpf"
+
+add_apparmor_lsm_options() {
+    ./scripts/config --enable CONFIG_SECURITY
+    ./scripts/config --enable CONFIG_SECURITYFS
+    ./scripts/config --enable CONFIG_SECURITY_APPARMOR
+    ./scripts/config --disable CONFIG_DEFAULT_SECURITY_SELINUX
+    ./scripts/config --disable CONFIG_DEFAULT_SECURITY_DAC
+    ./scripts/config --enable CONFIG_DEFAULT_SECURITY_APPARMOR
+    ./scripts/config --set-str CONFIG_LSM "$UBUNTU_LSM"
+}
+
+# Fails the build unless AppArmor is enabled and comes first in CONFIG_LSM.
+check_apparmor_lsm() {
+    local lsm
+    lsm=$(sed -n 's/^CONFIG_LSM="\(.*\)"$/\1/p' .config)
+    if ! grep -q "^CONFIG_SECURITY_APPARMOR=y" .config; then
+        log_error "  REQUIRED option missing: CONFIG_SECURITY_APPARMOR"
+        return 1
+    fi
+    if [ "$lsm" != "$UBUNTU_LSM" ]; then
+        log_error "  CONFIG_LSM is \"$lsm\", want \"$UBUNTU_LSM\""
+        return 1
+    fi
+    log_info "  CONFIG_LSM: $lsm"
+}
+
 create_k8s_kernel_config() {
     local kernel_dir="$1"
 
@@ -471,12 +515,38 @@ create_k8s_kernel_config() {
     ./scripts/config --enable CONFIG_NET_CLS_BPF
     ./scripts/config --enable CONFIG_NET_ACT_BPF
 
+    # --- Netfilter pieces Cilium's iptables datapath needs. Its rule sync
+    # starts with a raw-table "-j CT --notrack" rule for tunnel traffic;
+    # without xt_CT the whole sync failed, the masquerade rules never went
+    # in, and pods had no egress beyond the cluster ---
+    ./scripts/config --enable CONFIG_IP_NF_RAW
+    ./scripts/config --enable CONFIG_IP6_NF_RAW
+    ./scripts/config --enable CONFIG_NETFILTER_XT_TARGET_CT
+    ./scripts/config --enable CONFIG_NETFILTER_XT_TARGET_MARK
+    ./scripts/config --enable CONFIG_NETFILTER_XT_TARGET_CONNMARK
+    ./scripts/config --enable CONFIG_NETFILTER_XT_TARGET_TPROXY
+    ./scripts/config --enable CONFIG_NETFILTER_XT_MATCH_SOCKET
+    ./scripts/config --enable CONFIG_IP_SET
+    ./scripts/config --enable CONFIG_IP_SET_HASH_IP
+    ./scripts/config --enable CONFIG_IP_SET_HASH_NET
+    ./scripts/config --enable CONFIG_NETFILTER_XT_SET
+
     # --- Kernel config/headers access for diagnostics ---
     ./scripts/config --enable CONFIG_IKHEADERS
 
     # --- Nested virtualization, for cluster nodes under Cloud Hypervisor
     # (vmm cluster create --nested), e.g. to run Kata Containers ---
     add_nested_virt_options
+
+    # --- Device-mapper, for the devmapper snapshotter (Kata's Firecracker shim) ---
+    add_container_storage_options
+
+    # --- Node security matching an Ubuntu 24.04 kernel ---
+    add_apparmor_lsm_options
+    # /dev/mem for privileged containers, restricted to the first 1 MB
+    ./scripts/config --enable CONFIG_DEVMEM
+    ./scripts/config --enable CONFIG_STRICT_DEVMEM
+    ./scripts/config --disable CONFIG_IO_STRICT_DEVMEM
 
     # Resolve dependencies
     make olddefconfig
@@ -493,7 +563,11 @@ create_k8s_kernel_config() {
         CONFIG_TRACING CONFIG_DEBUG_INFO_BTF CONFIG_DEBUG_FS \
         CONFIG_NF_CT_NETLINK \
         CONFIG_NET_CLS_BPF CONFIG_NET_ACT_BPF CONFIG_SECURITYFS \
-        CONFIG_CFS_BANDWIDTH CONFIG_CGROUPS $NESTED_VIRT_REQUIRED; do
+        CONFIG_CFS_BANDWIDTH CONFIG_CGROUPS $NESTED_VIRT_REQUIRED \
+        CONFIG_IP_NF_RAW CONFIG_IP6_NF_RAW CONFIG_NETFILTER_XT_TARGET_CT \
+        CONFIG_NETFILTER_XT_TARGET_MARK CONFIG_NETFILTER_XT_TARGET_TPROXY \
+        CONFIG_NETFILTER_XT_MATCH_SOCKET CONFIG_NETFILTER_XT_SET \
+        $CONTAINER_STORAGE_REQUIRED CONFIG_STRICT_DEVMEM; do
         if grep -q "^${opt}=y" .config; then
             log_info "  $opt: enabled"
         else
@@ -501,6 +575,7 @@ create_k8s_kernel_config() {
             failed=true
         fi
     done
+    check_apparmor_lsm || failed=true
 
     if [ "$failed" = true ]; then
         log_error "One or more required kernel options are missing. Aborting."
@@ -518,13 +593,14 @@ create_nested_kernel_config() {
     create_kernel_config "$kernel_dir"
 
     add_nested_virt_options
+    add_container_storage_options
 
     make olddefconfig
 
     log_info "Nested profile applied — verifying mandatory options..."
 
     local failed=false
-    for opt in $NESTED_VIRT_REQUIRED CONFIG_TUN CONFIG_BRIDGE; do
+    for opt in $NESTED_VIRT_REQUIRED $CONTAINER_STORAGE_REQUIRED CONFIG_TUN CONFIG_BRIDGE; do
         if grep -q "^${opt}=y" .config; then
             log_info "  $opt: enabled"
         else
@@ -680,12 +756,11 @@ create_security_kernel_config() {
     ./scripts/config --enable CONFIG_USBIP_VHCI_HCD
 
     # --- Security subsystems (AppArmor, SELinux for testing profiles) ---
-    ./scripts/config --enable CONFIG_SECURITY
-    ./scripts/config --enable CONFIG_SECURITYFS
-    ./scripts/config --enable CONFIG_SECURITY_APPARMOR
+    # (CONFIG_LSM is a string: --enable would set it to "y", which
+    # olddefconfig discarded, leaving SELinux first and AppArmor inactive)
     ./scripts/config --enable CONFIG_SECURITY_SELINUX
     ./scripts/config --enable CONFIG_SECURITY_LANDLOCK
-    ./scripts/config --enable CONFIG_LSM
+    add_apparmor_lsm_options
 
     # --- Audit ---
     ./scripts/config --enable CONFIG_AUDIT
@@ -732,6 +807,7 @@ create_security_kernel_config() {
             log_warn "  $opt: NOT enabled (may have unmet dependencies)"
         fi
     done
+    check_apparmor_lsm || log_warn "  AppArmor will not be the active LSM"
 }
 
 create_security_kasan_kernel_config() {

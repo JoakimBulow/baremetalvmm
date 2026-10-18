@@ -43,7 +43,8 @@ func TestArgs(t *testing.T) {
 			{ImagePath: "/m/rw.ext4"},
 			{ImagePath: "/m/ro.ext4", ReadOnly: true},
 		},
-		Nested: true,
+		Nested:          true,
+		ExtraKernelArgs: "apparmor=0",
 	}
 	args := Args(cfg)
 
@@ -51,7 +52,7 @@ func TestArgs(t *testing.T) {
 		// A bare socket path is what vmproc matches the process on.
 		"--api-socket": {"/var/lib/vmm/sockets/a.sock"},
 		"--kernel":     {"/k/vmlinux"},
-		"--cmdline":    {"console=ttyS0 reboot=k panic=1 root=/dev/vda rw ip=172.16.0.9::172.16.0.1:255.255.0.0::eth0:off"},
+		"--cmdline":    {"console=ttyS0 reboot=k panic=1 root=/dev/vda rw ip=172.16.0.9::172.16.0.1:255.255.0.0::eth0:off apparmor=0"},
 		"--cpus":       {"boot=2,nested=on"},
 		"--memory":     {"size=1024M"},
 		// Rootfs first, then mounts in order, so they are vda, vdb, vdc.

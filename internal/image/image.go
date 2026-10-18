@@ -1124,11 +1124,55 @@ func (m *Manager) FindSecurityRootfs() string {
 // DefaultDNSServers are used when no custom DNS servers are specified
 var DefaultDNSServers = []string{"8.8.8.8", "8.8.4.4", "1.1.1.1"}
 
+// GuestSupport describes what a VM's rootfs offers the guest kernel.
+type GuestSupport struct {
+	// AppArmor is true if the rootfs has apparmor_parser. On an AppArmor
+	// kernel without it, containerd and Docker can't load their profiles
+	// and fail to create containers, so the VM should boot with apparmor=0.
+	AppArmor bool
+}
+
+// PrepareRootfs readies a VM's rootfs for boot and reports what it offers.
+// It removes container markers that images built before v0.17.1 still carry.
+func PrepareRootfs(rootfsPath string) (GuestSupport, error) {
+	mountPoint, err := os.MkdirTemp("", "vmm-rootfs-*")
+	if err != nil {
+		return GuestSupport{}, fmt.Errorf("failed to create mount point: %w", err)
+	}
+	defer os.RemoveAll(mountPoint)
+
+	if output, err := exec.Command("mount", "-o", "loop", rootfsPath, mountPoint).CombinedOutput(); err != nil {
+		return GuestSupport{}, fmt.Errorf("failed to mount rootfs: %w: %s", err, string(output))
+	}
+	defer func() { _ = exec.Command("umount", mountPoint).Run() }()
+
+	return prepareRootfsDir(mountPoint), nil
+}
+
+// prepareRootfsDir is PrepareRootfs on the mounted rootfs at root.
+func prepareRootfsDir(root string) GuestSupport {
+	removeContainerMarkers(root)
+	return GuestSupport{AppArmor: hasGuestFile(root, "usr/sbin/apparmor_parser") || hasGuestFile(root, "sbin/apparmor_parser")}
+}
+
+// hasGuestFile reports whether rel exists in the guest filesystem at root.
+// It doesn't follow symlinks, which in the guest would resolve on the host
+// (on merged-/usr images /sbin is one, and usr/sbin is checked anyway).
+func hasGuestFile(root, rel string) bool {
+	dir := root
+	for _, part := range strings.Split(filepath.Dir(rel), "/") {
+		dir = filepath.Join(dir, part)
+		if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+			return false
+		}
+	}
+	fi, err := os.Lstat(filepath.Join(root, rel))
+	return err == nil && fi.Mode().IsRegular()
+}
+
 // InjectDNSConfig injects DNS configuration into a rootfs image
 // This mounts the ext4 image and writes /etc/resolv.conf
 // If dnsServers is empty, default public DNS servers are used
-// It also removes container markers (see removeContainerMarkers) that images
-// built before v0.17.1 still carry, since every start mounts the rootfs here.
 func InjectDNSConfig(rootfsPath string, dnsServers []string) error {
 	// Use defaults if no custom servers specified
 	if len(dnsServers) == 0 {
@@ -1166,7 +1210,6 @@ func InjectDNSConfig(rootfsPath string, dnsServers []string) error {
 		return fmt.Errorf("failed to write resolv.conf: %w", err)
 	}
 
-	removeContainerMarkers(mountPoint)
 	return nil
 }
 

@@ -71,6 +71,9 @@ func (c *Client) Start(cfg *vm.LaunchConfig) (int, error) {
 	}
 
 	kernelArgs += cfg.IPBootArg()
+	if cfg.ExtraKernelArgs != "" {
+		kernelArgs += " " + cfg.ExtraKernelArgs
+	}
 
 	// Build drives list starting with rootfs
 	drives := []models.Drive{

@@ -88,6 +88,8 @@ type LaunchConfig struct {
 	MountDrives []MountDrive
 	// Nested exposes VMX/SVM to the guest.
 	Nested bool
+	// ExtraKernelArgs are appended to the kernel command line.
+	ExtraKernelArgs string
 }
 
 // IPBootArg returns the kernel argument that configures the guest's eth0

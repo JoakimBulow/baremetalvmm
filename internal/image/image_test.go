@@ -192,3 +192,47 @@ func TestRemoveContainerMarkers(t *testing.T) {
 		t.Errorf("unrelated file removed: %v", err)
 	}
 }
+
+func TestPrepareRootfsDir(t *testing.T) {
+	write := func(t *testing.T, root, rel string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, nil, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("apparmor userspace", func(t *testing.T) {
+		root := t.TempDir()
+		write(t, root, "usr/sbin/apparmor_parser")
+		write(t, root, ".dockerenv")
+		if got := prepareRootfsDir(root); !got.AppArmor {
+			t.Error("AppArmor = false, want true")
+		}
+		if _, err := os.Stat(filepath.Join(root, ".dockerenv")); !os.IsNotExist(err) {
+			t.Error(".dockerenv not removed")
+		}
+	})
+
+	t.Run("no apparmor userspace", func(t *testing.T) {
+		if got := prepareRootfsDir(t.TempDir()); got.AppArmor {
+			t.Error("AppArmor = true, want false")
+		}
+	})
+
+	t.Run("absolute sbin symlink is not followed", func(t *testing.T) {
+		// /sbin -> /usr/sbin in the guest would resolve against the host.
+		root := t.TempDir()
+		host := t.TempDir()
+		write(t, host, "apparmor_parser")
+		if err := os.Symlink(host, filepath.Join(root, "sbin")); err != nil {
+			t.Fatal(err)
+		}
+		if got := prepareRootfsDir(root); got.AppArmor {
+			t.Error("AppArmor = true through a symlink, want false")
+		}
+	})
+}

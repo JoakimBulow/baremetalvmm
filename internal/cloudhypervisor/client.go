@@ -90,6 +90,9 @@ func Args(cfg *vm.LaunchConfig) []string {
 		kernelArgs = "console=ttyS0 reboot=k panic=1"
 	}
 	kernelArgs += " root=/dev/vda rw" + cfg.IPBootArg()
+	if cfg.ExtraKernelArgs != "" {
+		kernelArgs += " " + cfg.ExtraKernelArgs
+	}
 
 	disks := []string{"path=" + cfg.RootfsPath + ",image_type=raw"}
 	for _, d := range cfg.MountDrives {

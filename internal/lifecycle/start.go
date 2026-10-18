@@ -86,6 +86,17 @@ func Start(cfg *config.Config, v *vm.VM, opts Options) error {
 		return err
 	}
 
+	var extraKernelArgs string
+	info, err := image.PrepareRootfs(v.RootfsPath)
+	if err := opts.soft(err); err != nil {
+		return err
+	}
+	if !info.AppArmor {
+		// Images without AppArmor userspace would otherwise fail to run
+		// containers under an AppArmor kernel (the k8s profile).
+		extraKernelArgs = "apparmor=0"
+	}
+
 	opts.progress("Configuring DNS...")
 	if err := image.InjectDNSConfig(v.RootfsPath, v.DNSServers); err != nil {
 		if err := opts.soft(fmt.Errorf("failed to inject DNS config: %w", err)); err != nil {
@@ -196,6 +207,8 @@ func Start(cfg *config.Config, v *vm.VM, opts Options) error {
 		Subnet:      cfg.Subnet,
 		MountDrives: mountDrives,
 		Nested:      v.Nested,
+
+		ExtraKernelArgs: extraKernelArgs,
 	}
 
 	pid, err := hv.Start(vmCfg)
