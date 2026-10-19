@@ -190,6 +190,28 @@ func (c *Config) Save(path string) error {
 
 // ConfigPath returns the default config file path
 func ConfigPath() string {
+	// Everything running as root (interactive sudo, systemd services such as
+	// vmm.service and vmm-web.service) uses the system-wide location, so there
+	// is a single source of truth no matter how vmm is invoked. Without this,
+	// services silently fall back to compiled-in defaults (e.g. the default
+	// bridge subnet), which breaks networking when it differs from the user's
+	// saved config.
+	if os.Getuid() == 0 {
+		const systemPath = "/etc/vmm/config.json"
+		if _, err := os.Stat(systemPath); err == nil {
+			return systemPath
+		}
+
+		// Legacy fallback: no system config yet, use the invoking user's.
+		if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" && sudoUser != "root" {
+			userPath := filepath.Join("/home", sudoUser, ".config", "vmm", "config.json")
+			if _, err := os.Stat(userPath); err == nil {
+				return userPath
+			}
+		}
+		return systemPath
+	}
+
 	if xdgConfig := os.Getenv("XDG_CONFIG_HOME"); xdgConfig != "" {
 		return filepath.Join(xdgConfig, "vmm", "config.json")
 	}
