@@ -43,20 +43,22 @@ func (m *Manager) prefixLen() string {
 func (m *Manager) EnsureBridge() error {
 	// Create bridge if it doesn't exist
 	if !m.bridgeExists() {
-		// Create bridge
 		if err := m.runCmd("ip", "link", "add", m.BridgeName, "type", "bridge"); err != nil {
 			return fmt.Errorf("failed to create bridge: %w", err)
 		}
+	}
 
-		// Set bridge IP
-		if err := m.runCmd("ip", "addr", "add", m.Gateway+"/"+m.prefixLen(), "dev", m.BridgeName); err != nil {
-			// Might already have an IP, continue
-		}
+	// Always ensure the bridge has the configured gateway IP. The bridge may
+	// already exist with a stale or default address (e.g. created before the
+	// config was read, or by a run with default settings), so this cannot be
+	// tied to bridge creation.
+	if err := m.runCmd("ip", "addr", "replace", m.Gateway+"/"+m.prefixLen(), "dev", m.BridgeName); err != nil {
+		return fmt.Errorf("failed to assign gateway IP to bridge: %w", err)
+	}
 
-		// Bring up bridge
-		if err := m.runCmd("ip", "link", "set", m.BridgeName, "up"); err != nil {
-			return fmt.Errorf("failed to bring up bridge: %w", err)
-		}
+	// Bring up bridge
+	if err := m.runCmd("ip", "link", "set", m.BridgeName, "up"); err != nil {
+		return fmt.Errorf("failed to bring up bridge: %w", err)
 	}
 
 	// Always ensure IP forwarding is enabled
