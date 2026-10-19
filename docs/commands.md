@@ -1,6 +1,6 @@
 # CLI Command Reference
 
-Run vmm commands with `sudo`. The data directory (`/var/lib/vmm`) is root-only, so commands that read or change VMs, images, kernels or clusters fail with "permission denied" without it, including read-only ones like `vmm list`. The exceptions are `vmm version`, `vmm upgrade --check`, `vmm config show` and `vmm completion`. `vmm config init` needs sudo too, since it creates the data directories; it still writes your own `~/.config/vmm/config.json`. The tables below leave `sudo` out for brevity.
+Run vmm commands with `sudo`. The data directory (`/var/lib/vmm`) is root-only, so commands that read or change VMs, images, kernels or clusters fail with "permission denied" without it, including read-only ones like `vmm list`. The exceptions are `vmm version`, `vmm upgrade --check`, `vmm config show` and `vmm completion`. `vmm config init` needs sudo too, since it creates the data directories and writes `/etc/vmm/config.json`. The tables below leave `sudo` out for brevity.
 
 ## VM Lifecycle
 

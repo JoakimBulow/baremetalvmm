@@ -188,30 +188,34 @@ func (c *Config) Save(path string) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// ConfigPath returns the default config file path
+// SystemConfigPath is the config file used by everything that runs as root:
+// sudo, vmm.service and vmm-web.service. Services have no SUDO_USER, so a
+// per-user config is invisible to them and they would silently boot VMs with
+// the default network settings.
+var SystemConfigPath = "/etc/vmm/config.json"
+
+// Replaced in tests.
+var (
+	getuid   = os.Getuid
+	homeRoot = "/home"
+)
+
+// ConfigPath returns the config file path. Root always uses SystemConfigPath.
+// Other users read it too once it exists, so read-only commands such as
+// `vmm list` agree with the services; without it they fall back to the
+// per-user config.
 func ConfigPath() string {
-	// Everything running as root (interactive sudo, systemd services such as
-	// vmm.service and vmm-web.service) uses the system-wide location, so there
-	// is a single source of truth no matter how vmm is invoked. Without this,
-	// services silently fall back to compiled-in defaults (e.g. the default
-	// bridge subnet), which breaks networking when it differs from the user's
-	// saved config.
-	if os.Getuid() == 0 {
-		const systemPath = "/etc/vmm/config.json"
-		if _, err := os.Stat(systemPath); err == nil {
-			return systemPath
-		}
-
-		// Legacy fallback: no system config yet, use the invoking user's.
-		if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" && sudoUser != "root" {
-			userPath := filepath.Join("/home", sudoUser, ".config", "vmm", "config.json")
-			if _, err := os.Stat(userPath); err == nil {
-				return userPath
-			}
-		}
-		return systemPath
+	if getuid() == 0 {
+		return SystemConfigPath
 	}
+	if _, err := os.Stat(SystemConfigPath); err == nil {
+		return SystemConfigPath
+	}
+	return userConfigPath()
+}
 
+// userConfigPath is the per-user config location used before SystemConfigPath.
+func userConfigPath() string {
 	if xdgConfig := os.Getenv("XDG_CONFIG_HOME"); xdgConfig != "" {
 		return filepath.Join(xdgConfig, "vmm", "config.json")
 	}
@@ -219,8 +223,86 @@ func ConfigPath() string {
 	// When running under sudo, use the original user's home directory
 	home, _ := os.UserHomeDir()
 	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" && sudoUser != "root" {
-		home = filepath.Join("/home", sudoUser)
+		home = filepath.Join(homeRoot, sudoUser)
 	}
 
 	return filepath.Join(home, ".config", "vmm", "config.json")
+}
+
+// MigrateSystemConfig copies a per-user config to SystemConfigPath the first
+// time vmm runs as root without one, and returns the file it copied ("" if
+// nothing was done). It looks at the sudo user's config, then root's, then a
+// config under /home when exactly one user has one: vmm.service runs without
+// SUDO_USER and may be the first new binary to run after `vmm upgrade`.
+func MigrateSystemConfig() (string, error) {
+	if getuid() != 0 {
+		return "", nil
+	}
+	if _, err := os.Stat(SystemConfigPath); !os.IsNotExist(err) {
+		return "", err
+	}
+
+	src, err := legacyConfigPath()
+	if src == "" || err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return "", err
+	}
+	if err := json.Unmarshal(data, DefaultConfig()); err != nil {
+		return "", fmt.Errorf("%s: %w", src, err)
+	}
+
+	dir := filepath.Dir(SystemConfigPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(dir, ".config-*.json")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return "", err
+	}
+	if err := tmp.Chmod(0644); err != nil {
+		tmp.Close()
+		return "", err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp.Name(), SystemConfigPath); err != nil {
+		return "", err
+	}
+	return src, nil
+}
+
+// legacyConfigPath finds the per-user config MigrateSystemConfig copies.
+func legacyConfigPath() (string, error) {
+	candidates := []string{userConfigPath()}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".config", "vmm", "config.json"))
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c, nil
+		}
+	}
+
+	matches, _ := filepath.Glob(filepath.Join(homeRoot, "*", ".config", "vmm", "config.json"))
+	switch len(matches) {
+	case 0:
+		return "", nil
+	case 1:
+		return matches[0], nil
+	}
+	return "", fmt.Errorf("found several user configs (%s); copy the right one to %s",
+		strings.Join(matches, ", "), SystemConfigPath)
 }

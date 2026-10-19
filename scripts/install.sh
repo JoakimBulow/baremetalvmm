@@ -175,28 +175,10 @@ chmod 0700 "$DATA_DIR"
 
 # ---------- Config ----------
 
-# vmm reads /etc/vmm/config.json when running as root (systemd services, sudo).
-# Older installs kept the config in a user's ~/.config/vmm, which root-run
-# services never see; migrate it so the services use the same settings instead
-# of compiled-in defaults (e.g. the default bridge subnet).
-SYSTEM_CONFIG="/etc/vmm/config.json"
-if [ ! -f "$SYSTEM_CONFIG" ]; then
-    USER_CONFIG=""
-    for candidate in \
-        "${SUDO_USER:+/home/$SUDO_USER/.config/vmm/config.json}" \
-        "/root/.config/vmm/config.json"; do
-        if [ -n "$candidate" ] && [ -f "$candidate" ]; then
-            USER_CONFIG="$candidate"
-            break
-        fi
-    done
-    if [ -n "$USER_CONFIG" ]; then
-        mkdir -p "$(dirname "$SYSTEM_CONFIG")"
-        install -m 0644 "$USER_CONFIG" "$SYSTEM_CONFIG"
-        ok "migrated config: $USER_CONFIG -> $SYSTEM_CONFIG"
-        warn "the original at $USER_CONFIG is no longer read by root-run vmm; edit $SYSTEM_CONFIG instead"
-    fi
-fi
+# Root-run vmm (sudo, vmm.service, vmm-web.service) reads /etc/vmm/config.json.
+# Running the new binary once as root copies an older ~/.config/vmm/config.json
+# there (sudo's SUDO_USER picks the right user), before the services next start.
+"$INSTALL_DIR/vmm" version </dev/null >/dev/null || true
 
 # ---------- Firecracker ----------
 
@@ -325,7 +307,7 @@ fi
 say ""
 if [ -z "$PREV_VERSION" ]; then
     say "Next steps:"
-    say "  vmm config init                              # optional: write /etc/vmm/config.json"
+    say "  sudo vmm config init                         # optional: write /etc/vmm/config.json"
     say "  sudo vmm create myvm --cpus 2 --memory 1024"
     say "  sudo vmm start myvm && vmm ssh myvm"
     say ""

@@ -47,6 +47,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	if src, err := config.MigrateSystemConfig(); err != nil {
+		log.Printf("Warning: could not create %s: %v", config.SystemConfigPath, err)
+	} else if src != "" {
+		log.Printf("Copied %s to %s", src, config.SystemConfigPath)
+	}
+
 	cfgPath := config.ConfigPath()
 	cfg, err := config.Load(cfgPath)
 	if err != nil {

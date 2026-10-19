@@ -2,13 +2,15 @@
 
 ## Config File
 
-VMM stores its configuration at `~/.config/vmm/config.json`. Initialize it with:
+VMM stores its configuration at `/etc/vmm/config.json`. Initialize it with:
 
 ```bash
 sudo vmm config init
 ```
 
-It needs sudo because it also creates the data directories, and under sudo it still writes your own `~/.config/vmm/config.json`, not root's.
+Everything that runs as root uses this one file: `sudo vmm`, `vmm.service` and `vmm-web.service`. Commands run without sudo, such as `vmm config show`, read it too.
+
+Versions before v0.17.3 kept the config in `~/.config/vmm/config.json`, which the systemd services never read. On reboot they started VMs with the default network settings, so VMs with a custom subnet were unreachable. The first time the new vmm runs as root it copies your old config to `/etc/vmm/config.json`. It takes the sudo user's config, then root's. With no sudo user, as in `vmm.service`, it takes the config from `/home` if exactly one user has one. After that, edit `/etc/vmm/config.json`: vmm no longer reads the old file.
 
 ## Data Directory
 
@@ -35,12 +37,6 @@ The resolution order is: `--data-dir` flag on `config init` > saved `data_dir` i
 > future operations. If you already have VMs, images, or snapshots in the old
 > location and want to keep them, stop all VMs and move the directory contents to
 > the new location yourself.
-
-> **Note for systemd:** `vmm.service` and `vmm-web.service` run as root and read
-> root's config at `/root/.config/vmm/config.json`. If you set a custom data
-> directory as a normal user (even via `sudo`, which writes to the invoking
-> user's home), the systemd services will not see it. Run `sudo vmm config set`
-> as root, or ensure both point at the same config file.
 
 ## Configurable VM Defaults
 

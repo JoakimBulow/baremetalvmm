@@ -17,6 +17,8 @@ type Manager struct {
 
 	// run replaces command execution in tests.
 	run func(name string, args ...string) error
+	// bridgeAddrs replaces reading the bridge's IPv4 addresses in tests.
+	bridgeAddrs func() ([]string, error)
 }
 
 // NewManager creates a new network manager
@@ -48,12 +50,8 @@ func (m *Manager) EnsureBridge() error {
 		}
 	}
 
-	// Always ensure the bridge has the configured gateway IP. The bridge may
-	// already exist with a stale or default address (e.g. created before the
-	// config was read, or by a run with default settings), so this cannot be
-	// tied to bridge creation.
-	if err := m.runCmd("ip", "addr", "replace", m.Gateway+"/"+m.prefixLen(), "dev", m.BridgeName); err != nil {
-		return fmt.Errorf("failed to assign gateway IP to bridge: %w", err)
+	if err := m.ensureGatewayAddr(); err != nil {
+		return err
 	}
 
 	// Bring up bridge
@@ -76,6 +74,54 @@ func (m *Manager) EnsureBridge() error {
 	}
 
 	return nil
+}
+
+// ensureGatewayAddr gives the bridge the configured gateway address and
+// removes any other IPv4 address on it. The bridge outlives vmm runs, so it
+// can carry an address from an earlier config (or from a service that read
+// the defaults); guests are configured with the current gateway and can't
+// reach the host through a stale one.
+func (m *Manager) ensureGatewayAddr() error {
+	want := m.Gateway + "/" + m.prefixLen()
+	if err := m.runCmd("ip", "addr", "replace", want, "dev", m.BridgeName); err != nil {
+		return fmt.Errorf("failed to assign gateway IP to bridge: %w", err)
+	}
+
+	addrs, err := m.listBridgeAddrs()
+	if err != nil {
+		return fmt.Errorf("failed to read bridge addresses: %w", err)
+	}
+	for _, addr := range addrs {
+		if addr == want {
+			continue
+		}
+		if err := m.runCmd("ip", "addr", "del", addr, "dev", m.BridgeName); err != nil {
+			return fmt.Errorf("failed to remove stale address %s from bridge: %w", addr, err)
+		}
+	}
+	return nil
+}
+
+// listBridgeAddrs returns the bridge's IPv4 addresses in CIDR form.
+func (m *Manager) listBridgeAddrs() ([]string, error) {
+	if m.bridgeAddrs != nil {
+		return m.bridgeAddrs()
+	}
+	iface, err := net.InterfaceByName(m.BridgeName)
+	if err != nil {
+		return nil, err
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, a := range addrs {
+		if ipnet, ok := a.(*net.IPNet); ok && ipnet.IP.To4() != nil {
+			out = append(out, ipnet.String())
+		}
+	}
+	return out, nil
 }
 
 // ensureFirewalldZone puts the bridge in firewalld's trusted zone when

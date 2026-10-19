@@ -79,7 +79,7 @@ sudo vmm cp /var/lib/vmm/images/kernels/vmlinux.bin lab:/root/
 sudo vmm cp /var/lib/vmm/images/rootfs/rootfs.ext4 lab:/root/
 ```
 
-To run vmm itself inside a nested VM, give the inner vmm a different subnet before creating VMs. The nested VM is already on the host's `172.16.0.0/16` network, so the default would clash with its own address and gateway. Set `subnet` and `gateway` in the inner vmm's `~/.config/vmm/config.json` (see [Configuration](configuration.md)):
+To run vmm itself inside a nested VM, give the inner vmm a different subnet before creating VMs. The nested VM is already on the host's `172.16.0.0/16` network, so the default would clash with its own address and gateway. Set `subnet` and `gateway` in the inner vmm's `/etc/vmm/config.json` (see [Configuration](configuration.md)):
 
 ```json
 {

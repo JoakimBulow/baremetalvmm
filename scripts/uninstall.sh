@@ -83,7 +83,7 @@ if [ "$SKIP_CONFIRM" = false ]; then
     echo "  - Stop all running VMs"
     echo "  - Remove VMM, Firecracker and Cloud Hypervisor binaries"
     echo "  - Remove all VM data (/var/lib/vmm)"
-    echo "  - Remove user configuration (~/.config/vmm)"
+    echo "  - Remove configuration (/etc/vmm, ~/.config/vmm)"
     echo "  - Remove network bridge and TAP devices"
     echo "  - Remove iptables rules"
     echo "  - Remove systemd service"
@@ -260,8 +260,14 @@ else
     echo "  $DATA_DIR not found"
 fi
 
-# 7. Remove user configuration
-echo "Removing user configuration..."
+# 7. Remove configuration
+echo "Removing configuration..."
+if [ -d /etc/vmm ]; then
+    rm -rf /etc/vmm
+    echo -e "  ${GREEN}Removed /etc/vmm${NC}"
+else
+    echo "  /etc/vmm not found"
+fi
 USER_CONFIG_DIR="$USER_HOME/.config/vmm"
 if [ -d "$USER_CONFIG_DIR" ]; then
     rm -rf "$USER_CONFIG_DIR"

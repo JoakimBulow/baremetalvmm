@@ -61,7 +61,7 @@ Future work (P4 — significant effort, deferred):
 
 - `cmd/vmm/main.go` — CLI entry point, all command definitions
 - `cmd/vmm-web/main.go` — Web UI entry point (separate binary)
-- `internal/config/` — Global config, paths, defaults. Config file: `~/.config/vmm/config.json`
+- `internal/config/` — Global config, paths, defaults. Config file: `/etc/vmm/config.json` (`SystemConfigPath`), used by everything running as root (sudo, `vmm.service`, `vmm-web.service`); non-root commands read it too and only fall back to `~/.config/vmm/config.json` when it doesn't exist. Services have no `SUDO_USER`, so before this they read a nonexistent `/root/.config` file and booted VMs with the default subnet. `MigrateSystemConfig` (called at startup by both binaries) copies an old per-user config there on the first root run
 - `internal/vm/` — VM struct, state machine, JSON persistence in `/var/lib/vmm/vms/`
 - `internal/hypervisor/` — VM backend selection. `Backend` (Start/Terminate/UpdateVMState/Version) and optional `Snapshotter`; `For(v)` picks the backend from `vm.VM.Backend` (empty = Firecracker, so older VM JSON is unchanged). Callers use `hypervisor.UpdateVMState`/`Terminate`/`SnapshotterFor`, never the Firecracker client directly (only `upgrade` does, to install the binary). A backend name this build doesn't know gets a stand-in that refuses start/stop and leaves recorded state alone rather than orphaning the process. Launch types (`vm.LaunchConfig`, `vm.MountDrive`, `vm.ConsoleLogPath`) live in `internal/vm` so backends don't import `hypervisor`
 - `internal/firecracker/` — Firecracker backend: SDK wrapper, socket API
@@ -108,7 +108,7 @@ vmm upgrade [--check] [--version X] [-y] [--force] [--rollback] [--update-units]
 vmm version [--json]
 ```
 
-Create flag defaults can be set in `~/.config/vmm/config.json` under `vm_defaults`. Resolution order: CLI flag > config default > hardcoded fallback.
+Create flag defaults can be set in `/etc/vmm/config.json` under `vm_defaults`. Resolution order: CLI flag > config default > hardcoded fallback.
 
 ## Common Development Tasks
 
@@ -125,6 +125,7 @@ Create flag defaults can be set in `~/.config/vmm/config.json` under `vm_default
 ### Modifying network behavior
 - Edit `internal/network/network.go`
 - On hosts running firewalld (Fedora/RHEL), `EnsureBridge()` puts the bridge in the `trusted` zone (runtime + permanent). firewalld's nftables table rejects inter-zone forwarding independently of our iptables rules, so without this VMs lose egress whenever the host NIC isn't in the default zone
+- `EnsureBridge()` sets the gateway address on every call and removes any other IPv4 address on the bridge (`ensureGatewayAddr`): the bridge outlives vmm runs and can carry an address from an older config
 - Key functions: `EnsureBridge()`, `CreateTap()`, `AllocateIP()`, `AddPortForward()`
 - Port forwards go through `internal/portforward` (CLI and web): `Apply` on start/restore, `Clear` on stop/delete, `Add`/`Remove` for live changes, `List` for status. Don't call `AddPortForward`/`RemovePortForward` directly from lifecycle code. iptables rules are unit-tested against a fake runner (`Manager.run`) in `internal/network/portforward_test.go`
 
@@ -236,7 +237,7 @@ vmm ssh myvm -- 'getent hosts google.com'  # DNS from VM
 
 ## Sudo Behavior
 
-Both `vmm ssh` and config loading detect `SUDO_USER` to use the original user's home directory (SSH keys, config file) rather than `/root/`. Cluster provisioning supports ssh-agent via `sudo -E` to preserve `SSH_AUTH_SOCK`.
+`vmm ssh` detects `SUDO_USER` to use the original user's home directory (SSH keys) rather than `/root/`. Cluster provisioning supports ssh-agent via `sudo -E` to preserve `SSH_AUTH_SOCK`.
 
 ## SSH Key Management
 

@@ -58,7 +58,7 @@ ip route | grep default
 # Example output: default via 192.168.1.1 dev wlp3s0
 
 # Check your config
-cat ~/.config/vmm/config.json
+cat /etc/vmm/config.json
 
 # Update host_interface if needed (e.g., change "eth0" to "wlp3s0")
 ```
