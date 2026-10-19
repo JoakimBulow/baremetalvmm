@@ -4,23 +4,25 @@ description: >
   Create, manage, and interact with Firecracker microVMs and Kubernetes clusters using the vmm CLI tool.
   Use when an agent needs to: spin up a Linux VM for testing or development, create a Kubernetes cluster
   from microVMs, snapshot a VM's rootfs for reuse, manage VM lifecycle (create/start/stop/delete),
-  SSH into a running VM, or work with custom kernels. Triggers on tasks involving virtual machines,
-  test environments, isolated Linux environments, Kubernetes cluster creation, or VM-based infrastructure.
+  SSH into a running VM, work with custom kernels, or create a nested VM that can run its own VMs
+  (Cloud Hypervisor backend, --nested). Triggers on tasks involving virtual machines, test environments,
+  isolated Linux environments, Kubernetes cluster creation, nested virtualization, /dev/kvm inside a VM,
+  KubeVirt/Kata/hypervisor testing, or VM-based infrastructure.
   Assumes vmm is already installed and configured on the host.
 ---
 
 # vmm — Bare Metal MicroVM Manager
 
-vmm manages Firecracker microVMs on Linux. All VM operations require `sudo`. Read-only commands (`list`, `image list`, `kernel list`) work without sudo.
+vmm manages Firecracker microVMs on Linux. VMs that need to run VMs of their own (nested virtualization) run under Cloud Hypervisor instead; see [Nested VMs](#nested-vms-vms-inside-vms). Run every vmm command with `sudo`, including read-only ones like `list`: the data directory (`/var/lib/vmm`) is root-only, so without sudo they fail with "permission denied".
 
 ## Quick Reference
 
 ```
-sudo vmm create <name> [--cpus N] [--memory MB] [--disk MB] [--ssh-key PATH] [--kernel NAME] [--image NAME] [--dns SERVER] [--mount PATH:TAG[:ro|rw]]
+sudo vmm create <name> [--cpus N] [--memory MB] [--disk MB] [--ssh-key PATH] [--kernel NAME] [--image NAME] [--dns SERVER] [--mount PATH:TAG[:ro|rw]] [--nested] [--backend firecracker|cloud-hypervisor]
 sudo vmm start <name>
 sudo vmm stop <name>
 sudo vmm delete <name> [-f]
-vmm list [-a]
+sudo vmm list [-a]
 sudo vmm ssh <name> [-u user]
 ```
 
@@ -57,19 +59,18 @@ sudo vmm delete myvm -f
 ### List VMs
 
 ```bash
-vmm list        # running VMs
-vmm list -a     # all VMs including stopped
+sudo vmm list        # all VMs, including stopped ones (-a is on by default)
 ```
 
 ## Networking
 
 VMs get IPs from 172.16.0.0/16, allocated sequentially from 172.16.0.2. The host can reach VMs directly by IP. VMs have outbound internet via NAT.
 
-To find a VM's IP, use `vmm list` — the IP column shows each VM's address.
+To find a VM's IP, use `sudo vmm list` — the IP column shows each VM's address. The columns are `NAME ID STATE CPUs MEMORY IP BACKEND`, and MEMORY prints as two words (`512 MB`), so with awk the IP is field 7: `sudo vmm list | awk '$1=="myvm" {print $7}'`.
 
 Additional networking features exist but are not covered in detail here:
 - **Port forwarding**: `sudo vmm port-forward add <name> <host-port>:<guest-port>`
-- **List port forwards**: `vmm port-forward list <name>`
+- **List port forwards**: `sudo vmm port-forward list <name>`
 - **Remove port forward**: `sudo vmm port-forward remove <name> <host-port>:<guest-port>`
 - **Custom DNS**: `--dns <server>` flag on create (repeatable)
 - **Host directory mounts**: `--mount /host/path:tag[:ro|rw]` flag on create
@@ -87,8 +88,8 @@ This downloads `vmlinux.bin` (Linux 6.1 LTS kernel) and `rootfs.ext4` (Ubuntu 24
 ### List available images and kernels
 
 ```bash
-vmm image list
-vmm kernel list
+sudo vmm image list
+sudo vmm kernel list
 ```
 
 ### Kernel variants
@@ -98,6 +99,8 @@ vmm kernel list
 | `vmlinux.bin` (default) | 6.1 LTS | General-purpose VMs |
 | `k8s-kernel` | 6.6 LTS | Kubernetes clusters (Cilium/BPF support) |
 | `security-kernel` | 6.12 LTS | Security testing (broad module coverage) |
+| `kasan-kernel` | 6.12 LTS | KASAN memory sanitizer (detects use-after-free, OOB, etc.) |
+| `nested-kernel` | 6.1 LTS | Nested VMs: default kernel + KVM, auto-selected by `--nested` |
 
 Use `--kernel <name>` on create to select a non-default kernel.
 
@@ -117,7 +120,7 @@ Use `--image <name>` on create to select a non-default rootfs (omit the `.ext4` 
 sudo vmm kernel build --version 6.6 --name my-custom-kernel
 ```
 
-This downloads and compiles a kernel with the specified version. Use `--name` to set the name it will be stored under. The built kernel appears in `vmm kernel list`.
+This downloads and compiles a kernel with the specified version. Use `--name` to set the name it will be stored under, and `--profile` to pick a config profile (`default`, `k8s`, `nested`, `security`, `security-kasan`). The built kernel appears in `sudo vmm kernel list`. Prefer `sudo vmm kernel pull <name>` when a pre-built release exists — building takes several minutes.
 
 ### Import a kernel with force overwrite
 
@@ -157,6 +160,44 @@ sudo vmm create worker1 --image my-template
 
 The snapshot shrinks the rootfs to minimum size automatically.
 
+## Nested VMs (VMs inside VMs)
+
+Use a nested VM when the guest itself needs `/dev/kvm`: running Firecracker/QEMU/Cloud Hypervisor inside a VM, Kata Containers, KubeVirt, hypervisor or KVM testing, or vmm itself. Firecracker can't expose VT-x/AMD-V to guests, so `--nested` runs the VM under **Cloud Hypervisor**. Firecracker VMs and Cloud Hypervisor VMs run side by side on the same bridge.
+
+### Check prerequisites first
+
+```bash
+cat /sys/module/kvm_intel/parameters/nested /sys/module/kvm_amd/parameters/nested 2>/dev/null   # want Y or 1
+command -v cloud-hypervisor            # installed by: install.sh --with-cloud-hypervisor, or sudo vmm upgrade --with-cloud-hypervisor
+sudo vmm kernel list | grep nested-kernel   # if missing: sudo vmm kernel pull nested-kernel
+```
+
+`vmm create --nested` checks all three and fails with a specific message if one is missing, so you can also just try it and act on the error. Enabling nested KVM on the host or installing Cloud Hypervisor changes the host — ask the user before doing either.
+
+### Create and use a nested VM
+
+```bash
+sudo vmm create lab --nested --cpus 2 --memory 2048 --disk 8192
+sudo vmm start lab
+sleep 8
+sudo vmm ssh lab -- 'ls -l /dev/kvm'
+```
+
+- `--nested` implies `--backend cloud-hypervisor` and the `nested-kernel` kernel (unless `--kernel` is given; a kernel without KVM gives a guest with no `/dev/kvm`). `--backend firecracker --nested` is an error.
+- Give it 2 GB+ memory so it has room for its own guests. Nested guests are noticeably slower.
+- `sudo vmm list` shows `cloud-hypervisor+nested` in the BACKEND column.
+- SSH, `vmm cp`, `sudo vmm console`, port forwards, `--mount`, `--dns` and autostart all work as for Firecracker VMs.
+- To run vmm *inside* a nested VM, set a different `subnet`/`gateway` (e.g. `172.17.0.0/16` / `172.17.0.1`) in the inner `~/.config/vmm/config.json` first — the default 172.16.0.0/16 clashes with the nested VM's own network.
+- `sudo vmm create plain --backend cloud-hypervisor` runs an ordinary (non-nested) VM under Cloud Hypervisor.
+- Whole clusters can be nested too (e.g. for Kata Containers): `sudo vmm cluster create lab --nested --workers 1 --cpus 4 --memory 8192`. See [references/kubernetes.md](references/kubernetes.md#nested-clusters-kata-containers).
+
+### Differences from Firecracker VMs
+
+- **No memory snapshots**: `vmm snapshot create` is refused for Cloud Hypervisor VMs. `vmm image snapshot` (rootfs only) still works.
+- **Stop**: a clean ACPI power-off, usually under a second with `nested-kernel` (5-7s for a Kubernetes node). With kernels lacking the ACPI button driver the guest ignores the power button and is stopped with SIGTERM after 30 seconds.
+- **Logs**: `/var/lib/vmm/logs/<name>.log` holds Cloud Hypervisor's own output (check it if start fails); the serial console is in `sudo vmm console <name> --full` as usual.
+- The backend is fixed at create time.
+
 ## Kubernetes Clusters
 
 For cluster details and workflows, see [references/kubernetes.md](references/kubernetes.md).
@@ -171,16 +212,20 @@ sudo vmm cluster create mycluster
 sudo vmm cluster create mycluster --workers 2
 
 # Custom resources and K8s version
-sudo vmm cluster create mycluster --workers 2 --cpus 4 --memory 8192 --k8s-version 1.36.0
+sudo vmm cluster create mycluster --workers 2 --cpus 4 --memory 8192 --k8s-version 1.36   # newest 1.36 patch; or exact, e.g. 1.36.5
 
 # Use the cluster
 kubectl --context vmm-mycluster get nodes
+
+# Stop and start (workers stop first; start waits for every node to report Ready)
+sudo vmm cluster stop mycluster
+sudo vmm cluster start mycluster
 
 # Delete
 sudo vmm cluster delete mycluster -f
 ```
 
-`--ssh-key` is optional for clusters too — the VMM-managed key is used for cluster provisioning (kubeadm over SSH) by default. If `k8s-kernel` is available locally, it is auto-selected for clusters.
+`--ssh-key` is optional for clusters too — the VMM-managed key is used for cluster provisioning (kubeadm over SSH) by default. A public key passed with `--ssh-key` is added to the nodes; its private half provisions the cluster only if it sits next to the `.pub` file. If `k8s-kernel` is available locally, it is auto-selected for clusters.
 
 ## Common Patterns for Agents
 
@@ -205,7 +250,7 @@ sudo vmm ssh myvm -- 'systemctl status ssh'
 ### Wait for VM to be reachable
 
 ```bash
-VM_IP=$(vmm list | grep myvm | awk '{print $3}')
+VM_IP=$(sudo vmm list | awk '$1=="myvm" {print $7}')
 until ping -c1 -W1 "$VM_IP" &>/dev/null; do sleep 1; done
 ```
 
@@ -230,6 +275,23 @@ sudo vmm ssh sectest
 
 The security kernel (6.12 LTS) provides broad module coverage for security testing scenarios. The security rootfs comes pre-loaded with container and Kubernetes security tools.
 
+### Spin up a KASAN memory sanitizer environment
+
+```bash
+# KASAN needs extra memory (~2x overhead) — use --memory 1024+
+sudo vmm create kasan-test --cpus 2 --memory 2048 --kernel kasan-kernel
+sudo vmm start kasan-test
+sleep 8
+
+# Monitor for KASAN reports via serial console
+sudo vmm console kasan-test
+
+# Or grep for KASAN bugs after running an exploit
+sudo vmm console kasan-test --full | grep -A 30 "BUG: KASAN"
+```
+
+The KASAN kernel has the same module coverage as the security kernel, plus Kernel Address Sanitizer instrumentation. It detects use-after-free, out-of-bounds access, double-free, and other memory corruption bugs, reporting them to the serial console. Available across all LTS series (5.10–6.18) as `kasan-kernel-<series>`. Build locally with `--config-profile security-kasan`.
+
 ### Use a custom SSH key alongside the managed key
 
 ```bash
@@ -243,7 +305,8 @@ Your key is added alongside the VMM-managed key. Both can be used to access the 
 - All create/start/stop/delete operations require `sudo`.
 - VMs are persistent across reboots if the systemd service is installed.
 - VM configs are stored in `/var/lib/vmm/vms/<name>.json`.
-- Firecracker logs are in `/var/lib/vmm/logs/<name>.log` — check these if a VM fails to start.
+- Hypervisor logs (Firecracker or Cloud Hypervisor) are in `/var/lib/vmm/logs/<name>.log` — check these if a VM fails to start.
+- `sudo vmm console <name>` follows the log until interrupted; use `sudo vmm console <name> --full` in scripts or it will hang.
 - VM names must be unique. Attempting to create a duplicate name will fail.
 - Disk size is set at creation time and cannot be changed later.
 - VMM auto-manages an Ed25519 SSH key pair — `--ssh-key` is optional and adds your key alongside the managed one.

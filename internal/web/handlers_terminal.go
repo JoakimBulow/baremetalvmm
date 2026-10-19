@@ -17,7 +17,7 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 	"nhooyr.io/websocket"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/sshkey"
 	"github.com/raesene/baremetalvmm/internal/validate"
 	"github.com/raesene/baremetalvmm/internal/vm"
@@ -43,8 +43,7 @@ func (s *Server) handleTerminalPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fcClient := firecracker.NewClient()
-	fcClient.UpdateVMState(v)
+	hypervisor.UpdateVMState(v)
 
 	if v.State != vm.StateRunning {
 		http.Redirect(w, r, fmt.Sprintf("/vms/%s", name), http.StatusSeeOther)
@@ -76,8 +75,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fcClient := firecracker.NewClient()
-	fcClient.UpdateVMState(v)
+	hypervisor.UpdateVMState(v)
 
 	if v.State != vm.StateRunning {
 		http.Error(w, "VM is not running", http.StatusBadRequest)

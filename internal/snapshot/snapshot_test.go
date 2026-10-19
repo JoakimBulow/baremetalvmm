@@ -1,10 +1,14 @@
 package snapshot
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/raesene/baremetalvmm/internal/vm"
 )
 
 // writeSnapshot creates a snapshot directory with metadata and dummy data files
@@ -181,5 +185,44 @@ func TestCopyFile(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0600 {
 		t.Fatalf("expected dst perms 0600, got %v", info.Mode().Perm())
+	}
+}
+
+// fakeBackend satisfies hypervisor.Backend with just a name.
+type fakeBackend struct{ name string }
+
+func (f fakeBackend) Name() string                            { return f.name }
+func (f fakeBackend) Start(*vm.LaunchConfig) (int, error)     { return 0, nil }
+func (f fakeBackend) Terminate(context.Context, *vm.VM) error { return nil }
+func (f fakeBackend) UpdateVMState(*vm.VM)                    {}
+func (f fakeBackend) Version() string                         { return "" }
+
+func TestCompatible(t *testing.T) {
+	tests := []struct {
+		snapBackend, vmBackend string
+		ok                     bool
+	}{
+		{"", "firecracker", true}, // snapshots from before backends existed
+		{"firecracker", "firecracker", true},
+		{"cloud-hypervisor", "cloud-hypervisor", true},
+		{"", "cloud-hypervisor", false},
+		{"cloud-hypervisor", "firecracker", false},
+	}
+	for _, tt := range tests {
+		meta := &Metadata{Name: "s", VMName: "v", Backend: tt.snapBackend}
+		err := meta.Compatible(fakeBackend{tt.vmBackend})
+		if (err == nil) != tt.ok {
+			t.Errorf("snapshot %q on VM %q: err = %v, want ok=%v", tt.snapBackend, tt.vmBackend, err, tt.ok)
+		}
+	}
+}
+
+func TestMetadataReadsLegacyVersionKey(t *testing.T) {
+	var meta Metadata
+	if err := json.Unmarshal([]byte(`{"name":"s","fc_version":"v1.16.0"}`), &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta.BackendVersion != "v1.16.0" || meta.BackendName() != "firecracker" {
+		t.Errorf("got backend %q version %q", meta.BackendName(), meta.BackendVersion)
 	}
 }

@@ -3,47 +3,28 @@ package web
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/raesene/baremetalvmm/internal/image"
 	"github.com/raesene/baremetalvmm/internal/validate"
 )
 
-func (s *Server) handleImages(w http.ResponseWriter, r *http.Request) {
+// releasePageMaxAge is how long the images page reuses the GitHub release
+// listing (the unauthenticated API allows 60 requests an hour).
+const releasePageMaxAge = 15 * time.Minute
+
+func (s *Server) imageManager() *image.Manager {
 	paths := s.cfg.GetPaths()
-	imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
+	return image.NewManager(paths.Kernels, paths.Rootfs)
+}
 
-	kernels, err := imgMgr.ListKernelsWithInfo()
-	if err != nil {
-		kernels = []image.KernelInfo{}
-	}
+// availableReleases lists the GitHub releases, cached for up to maxAge.
+func (s *Server) availableReleases(maxAge time.Duration) ([]image.AvailableRelease, error) {
+	return s.imageManager().ListAvailableReleasesCached(maxAge)
+}
 
-	rootfs, err := imgMgr.ListRootfsWithInfo()
-	if err != nil {
-		rootfs = []image.RootfsInfo{}
-	}
-
-	available, err := imgMgr.ListAvailableReleases()
-	if err != nil {
-		log.Printf("Failed to fetch GitHub releases: %v", err)
-		available = []image.AvailableRelease{}
-	}
-
-	var availableKernels, availableRootfs []image.AvailableRelease
-	for _, rel := range available {
-		if rel.Type == "kernel" {
-			availableKernels = append(availableKernels, rel)
-		} else {
-			availableRootfs = append(availableRootfs, rel)
-		}
-	}
-
-	s.renderPage(w, r, "images.html", "images", map[string]interface{}{
-		"Kernels":          kernels,
-		"Rootfs":           rootfs,
-		"AvailableKernels": availableKernels,
-		"AvailableRootfs":  availableRootfs,
-		"GithubError":      err != nil,
-	})
+func (s *Server) handleImages(w http.ResponseWriter, r *http.Request) {
+	s.renderImagesFlash(w, r, "", "")
 }
 
 func (s *Server) handleKernelDelete(w http.ResponseWriter, r *http.Request) {
@@ -149,13 +130,21 @@ func (s *Server) handleRootfsDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderImagesFlash(w http.ResponseWriter, r *http.Request, msg, flashType string) {
-	paths := s.cfg.GetPaths()
-	imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
+	imgMgr := s.imageManager()
 
-	kernels, _ := imgMgr.ListKernelsWithInfo()
-	rootfs, _ := imgMgr.ListRootfsWithInfo()
+	kernels, err := imgMgr.ListKernelsWithInfo()
+	if err != nil {
+		kernels = []image.KernelInfo{}
+	}
+	rootfs, err := imgMgr.ListRootfsWithInfo()
+	if err != nil {
+		rootfs = []image.RootfsInfo{}
+	}
 
-	available, err := imgMgr.ListAvailableReleases()
+	available, githubErr := s.availableReleases(releasePageMaxAge)
+	if githubErr != nil {
+		log.Printf("Failed to fetch GitHub releases: %v", githubErr)
+	}
 	var availableKernels, availableRootfs []image.AvailableRelease
 	for _, rel := range available {
 		if rel.Type == "kernel" {
@@ -164,16 +153,24 @@ func (s *Server) renderImagesFlash(w http.ResponseWriter, r *http.Request, msg, 
 			availableRootfs = append(availableRootfs, rel)
 		}
 	}
+	updates := imgMgr.Updates(available)
+	if githubErr == nil {
+		s.updates.setArtifactCount(len(updates))
+	}
 
-	s.renderPage(w, r, "images.html", "images", map[string]interface{}{
+	data := map[string]interface{}{
 		"Kernels":          kernels,
 		"Rootfs":           rootfs,
 		"AvailableKernels": availableKernels,
 		"AvailableRootfs":  availableRootfs,
-		"GithubError":      err != nil,
-		"Flash":            msg,
-		"FlashType":        flashType,
-	})
+		"Updates":          updates,
+		"GithubError":      githubErr != nil,
+	}
+	if msg != "" {
+		data["Flash"] = msg
+		data["FlashType"] = flashType
+	}
+	s.renderPage(w, r, "images.html", "images", data)
 }
 
 // JSON API handlers

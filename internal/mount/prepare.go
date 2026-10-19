@@ -3,7 +3,6 @@ package mount
 import (
 	"fmt"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
 	"github.com/raesene/baremetalvmm/internal/image"
 	"github.com/raesene/baremetalvmm/internal/vm"
 )
@@ -20,12 +19,12 @@ func guestDevice(i int) string {
 // is called with the error and the mount is left out. Devices are numbered
 // by attached drive, not by position in v.Mounts, so a skipped mount doesn't
 // shift the later ones onto the wrong device.
-func (m *Manager) PrepareVM(v *vm.VM, skip func(*vm.Mount, error)) ([]firecracker.MountDrive, error) {
+func (m *Manager) PrepareVM(v *vm.VM, skip func(*vm.Mount, error)) ([]vm.MountDrive, error) {
 	if len(v.Mounts) == 0 {
 		return nil, nil
 	}
 	var entries []image.MountEntry
-	var drives []firecracker.MountDrive
+	var drives []vm.MountDrive
 	for i := range v.Mounts {
 		mnt := &v.Mounts[i]
 		if err := m.CreateMountImage(mnt, v.Name); err != nil {
@@ -40,7 +39,7 @@ func (m *Manager) PrepareVM(v *vm.VM, skip func(*vm.Mount, error)) ([]firecracke
 			MountPath: "/mnt/" + mnt.GuestTag,
 			ReadOnly:  mnt.ReadOnly,
 		})
-		drives = append(drives, firecracker.MountDrive{
+		drives = append(drives, vm.MountDrive{
 			ImagePath: mnt.ImagePath,
 			Tag:       mnt.GuestTag,
 			ReadOnly:  mnt.ReadOnly,

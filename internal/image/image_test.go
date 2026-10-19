@@ -121,7 +121,7 @@ func TestInstallMountService(t *testing.T) {
 	link := filepath.Join(root, "etc/systemd/system/multi-user.target.wants", mountServiceName)
 
 	// Enabling twice must not fail on the existing symlink.
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if err := installMountService(root, true); err != nil {
 			t.Fatalf("enable: %v", err)
 		}
@@ -144,4 +144,95 @@ func TestInstallMountService(t *testing.T) {
 	if err := installMountService(root, false); err != nil {
 		t.Errorf("disable with nothing installed: %v", err)
 	}
+}
+
+func TestInstallPowerButtonService(t *testing.T) {
+	root := t.TempDir()
+
+	// Every start reinstalls it, so a second install must not fail.
+	for range 2 {
+		if err := installPowerButtonService(root); err != nil {
+			t.Fatalf("install: %v", err)
+		}
+	}
+	info, err := os.Stat(filepath.Join(root, powerButtonScriptPath))
+	if err != nil || info.Mode().Perm()&0111 == 0 {
+		t.Fatalf("script missing or not executable: %v", err)
+	}
+	unit, err := os.ReadFile(filepath.Join(root, "etc/systemd/system", powerButtonServiceName))
+	if err != nil || !strings.Contains(string(unit), "ExecStart="+powerButtonScriptPath) {
+		t.Errorf("unit not written: %v", err)
+	}
+	link := filepath.Join(root, "etc/systemd/system/multi-user.target.wants", powerButtonServiceName)
+	if _, err := os.Readlink(link); err != nil {
+		t.Errorf("unit not enabled: %v", err)
+	}
+}
+
+func TestRemoveContainerMarkers(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "run"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{".dockerenv", "run/.containerenv", "keep"} {
+		if err := os.WriteFile(filepath.Join(dir, f), nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	removeContainerMarkers(dir)
+	removeContainerMarkers(dir) // missing markers are not an error
+
+	for _, f := range []string{".dockerenv", "run/.containerenv"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); !os.IsNotExist(err) {
+			t.Errorf("%s still present (err=%v)", f, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "keep")); err != nil {
+		t.Errorf("unrelated file removed: %v", err)
+	}
+}
+
+func TestPrepareRootfsDir(t *testing.T) {
+	write := func(t *testing.T, root, rel string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, nil, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("apparmor userspace", func(t *testing.T) {
+		root := t.TempDir()
+		write(t, root, "usr/sbin/apparmor_parser")
+		write(t, root, ".dockerenv")
+		if got := prepareRootfsDir(root); !got.AppArmor {
+			t.Error("AppArmor = false, want true")
+		}
+		if _, err := os.Stat(filepath.Join(root, ".dockerenv")); !os.IsNotExist(err) {
+			t.Error(".dockerenv not removed")
+		}
+	})
+
+	t.Run("no apparmor userspace", func(t *testing.T) {
+		if got := prepareRootfsDir(t.TempDir()); got.AppArmor {
+			t.Error("AppArmor = true, want false")
+		}
+	})
+
+	t.Run("absolute sbin symlink is not followed", func(t *testing.T) {
+		// /sbin -> /usr/sbin in the guest would resolve against the host.
+		root := t.TempDir()
+		host := t.TempDir()
+		write(t, host, "apparmor_parser")
+		if err := os.Symlink(host, filepath.Join(root, "sbin")); err != nil {
+			t.Fatal(err)
+		}
+		if got := prepareRootfsDir(root); got.AppArmor {
+			t.Error("AppArmor = true through a symlink, want false")
+		}
+	})
 }

@@ -41,16 +41,13 @@ func kernelCmd() *cobra.Command {
 						fmt.Println("Available kernels on GitHub:")
 						found = true
 					}
-					status := "  "
-					if r.Downloaded {
-						status = "✓ "
-					}
+					status := releaseStatus(r)
 					fmt.Printf("  %s%-20s  %s  [%s]\n", status, r.LocalName, r.Description, r.Tag)
 				}
 				if !found {
 					fmt.Println("No kernel releases found on GitHub.")
 				} else {
-					fmt.Println("\n  ✓ = already downloaded")
+					fmt.Println("\n  ✓ = already downloaded, ↑ = newer release than the local copy (pull with --force)")
 					fmt.Println("  Use 'vmm kernel pull <name>' to download a kernel")
 				}
 				return nil
@@ -77,6 +74,7 @@ func kernelCmd() *cobra.Command {
 				fmt.Printf("  - %-20s %6.1f MB  %s%s\n", k.Name, sizeMB, k.Description, defaultMarker)
 			}
 
+			printArtifactUpdates(imgMgr, "kernel")
 			return nil
 		},
 	}
@@ -161,6 +159,7 @@ Examples:
 
 	var buildVersion string
 	var buildName string
+	var buildProfile string
 	buildCmd := &cobra.Command{
 		Use:   "build",
 		Short: "Build a kernel from source",
@@ -173,7 +172,8 @@ Supported kernel versions: 5.10, 6.1, 6.6
 
 Examples:
   vmm kernel build --version 6.1 --name kernel-6.1
-  vmm kernel build --version 5.10 --name kernel-lts`,
+  vmm kernel build --version 5.10 --name kernel-lts
+  vmm kernel build --version 6.1 --name nested-kernel --profile nested`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if buildVersion == "" {
 				return fmt.Errorf("--version is required (e.g., 5.10, 6.1, 6.6)")
@@ -197,6 +197,9 @@ Examples:
 
 			paths := cfg.GetPaths()
 			buildArgs := []string{scriptPath, "--version", buildVersion, "--name", buildName, "--output", paths.Kernels}
+			if buildProfile != "" {
+				buildArgs = append(buildArgs, "--config-profile", buildProfile)
+			}
 
 			fmt.Printf("Building kernel %s as '%s'...\n", buildVersion, buildName)
 			fmt.Println("This may take a while depending on your system.")
@@ -216,6 +219,7 @@ Examples:
 	}
 	buildCmd.Flags().StringVar(&buildVersion, "version", "", "Kernel version to build (e.g., 5.10, 6.1, 6.6)")
 	buildCmd.Flags().StringVar(&buildName, "name", "", "Name for the built kernel (required)")
+	buildCmd.Flags().StringVar(&buildProfile, "profile", "", "Config profile: default, k8s, nested, security or security-kasan")
 	buildCmd.MarkFlagRequired("version")
 	buildCmd.MarkFlagRequired("name")
 

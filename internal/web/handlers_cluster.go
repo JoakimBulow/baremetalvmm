@@ -13,8 +13,9 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/raesene/baremetalvmm/internal/cluster"
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/image"
+	"github.com/raesene/baremetalvmm/internal/lifecycle"
 	"github.com/raesene/baremetalvmm/internal/network"
 	"github.com/raesene/baremetalvmm/internal/sshkey"
 	"github.com/raesene/baremetalvmm/internal/validate"
@@ -127,6 +128,7 @@ func (s *Server) handleClusterCreate(w http.ResponseWriter, r *http.Request) {
 	imageName := r.FormValue("image")
 	cni := cluster.NormalizeCNI(r.FormValue("cni"))
 	adminWorkstation := r.FormValue("admin_workstation") == "on"
+	nested := r.FormValue("nested") == "on"
 
 	if err := validate.CPUs(cpus); err != nil {
 		s.renderPage(w, r, "cluster_create.html", "clusters", map[string]interface{}{
@@ -234,6 +236,16 @@ func (s *Server) handleClusterCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if nested {
+		if err := lifecycle.CheckNestedCluster(imgMgr, isOpenShift, cl.Kernel); err != nil {
+			s.renderPage(w, r, "cluster_create.html", "clusters", map[string]interface{}{
+				"Flash": err.Error(), "FlashType": "error",
+			})
+			return
+		}
+		cl.Nested = true
+	}
+
 	var adminPubKey string
 	if adminWorkstation {
 		secImage := imgMgr.FindSecurityRootfs()
@@ -291,6 +303,7 @@ func (s *Server) handleClusterCreate(w http.ResponseWriter, r *http.Request) {
 			newVM.SSHPublicKey = sshkey.JoinKeys(sshKey, adminPubKey)
 		}
 		newVM.SocketPath = fmt.Sprintf("%s/%s.sock", paths.Sockets, vmName)
+		cl.ConfigureNodeVM(newVM)
 
 		if err := newVM.Save(paths.VMs); err != nil {
 			cl.State = cluster.StateError
@@ -346,8 +359,7 @@ func (s *Server) provisionClusterInBackground(clusterName, source string) {
 			return
 		}
 
-		fcClient := firecracker.NewClient()
-		fcClient.UpdateVMState(existingVM)
+		hypervisor.UpdateVMState(existingVM)
 		if existingVM.State == vm.StateRunning {
 			if vmName == cl.AdminVM {
 				adminIP = existingVM.IPAddress
@@ -464,7 +476,6 @@ func (s *Server) deleteCluster(w http.ResponseWriter, r *http.Request) {
 	release := s.sseBroker.Hold(kindCluster, name)
 	defer release()
 
-	fcClient := firecracker.NewClient()
 	netMgr := network.NewManager(s.cfg.BridgeName, s.cfg.Subnet, s.cfg.Gateway, s.cfg.HostInterface)
 	imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
 
@@ -476,11 +487,11 @@ func (s *Server) deleteCluster(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		fcClient.UpdateVMState(existingVM)
+		hypervisor.UpdateVMState(existingVM)
 		if existingVM.State == vm.StateRunning {
 			ctx := context.Background()
 			// Keep the VM record if the process survives, so it is not orphaned
-			if err := fcClient.Terminate(ctx, existingVM); err != nil {
+			if err := hypervisor.Terminate(ctx, existingVM); err != nil {
 				existingVM.State = vm.StateError
 				if saveErr := existingVM.Save(paths.VMs); saveErr != nil {
 					log.Printf("failed to save state for VM %s: %v", vmName, saveErr)
@@ -547,6 +558,7 @@ func (s *Server) handleAPIClusterCreate(w http.ResponseWriter, r *http.Request) 
 		Image            string `json:"image"`
 		AdminWorkstation bool   `json:"admin_workstation"`
 		CNI              string `json:"cni"`
+		Nested           bool   `json:"nested"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "Invalid request body", http.StatusBadRequest)
@@ -629,12 +641,11 @@ func (s *Server) handleAPIClusterCreate(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	} else {
-		if req.K8sVersion == "" {
-			req.K8sVersion = "1.36.0"
-		}
-		if err := validate.K8sVersion(req.K8sVersion); err != nil {
-			jsonError(w, err.Error(), http.StatusBadRequest)
-			return
+		if req.K8sVersion != "" {
+			if err := validate.K8sVersionOrMinor(req.K8sVersion); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 		}
 		if req.MemoryMB < 2048 {
 			jsonError(w, "Kubernetes requires at least 2048 MB memory", http.StatusBadRequest)
@@ -671,17 +682,31 @@ func (s *Server) handleAPIClusterCreate(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	} else {
-		cl.Image = req.Image
 		if req.Kernel == "" {
 			if imgMgr.KernelExists("k8s-kernel") {
 				cl.Kernel = "k8s-kernel"
 			}
 		}
-		if req.Image == "" {
-			if found := imgMgr.FindK8sRootfs(req.K8sVersion); found != "" {
-				cl.Image = found
-			}
+		if req.Image != "" && !imgMgr.ImageExists(req.Image) {
+			jsonError(w, fmt.Sprintf("image '%s' not found", req.Image), http.StatusBadRequest)
+			return
 		}
+		// The image and Kubernetes version must agree: pick one from the other.
+		chosen, version, err := cluster.ChooseK8sImage(imgMgr, req.Image, req.K8sVersion)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cl.Image = chosen
+		cl.K8sVersion = version
+	}
+
+	if req.Nested {
+		if err := lifecycle.CheckNestedCluster(imgMgr, isOpenShift, cl.Kernel); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cl.Nested = true
 	}
 
 	var adminPubKey string
@@ -730,6 +755,7 @@ func (s *Server) handleAPIClusterCreate(w http.ResponseWriter, r *http.Request) 
 			newVM.SSHPublicKey = sshkey.JoinKeys(req.SSHKey, adminPubKey)
 		}
 		newVM.SocketPath = fmt.Sprintf("%s/%s.sock", paths.Sockets, vmName)
+		cl.ConfigureNodeVM(newVM)
 
 		if err := newVM.Save(paths.VMs); err != nil {
 			cl.State = cluster.StateError
@@ -765,7 +791,6 @@ func (s *Server) handleAPIClusterDelete(w http.ResponseWriter, r *http.Request) 
 	release := s.sseBroker.Hold(kindCluster, name)
 	defer release()
 
-	fcClient := firecracker.NewClient()
 	netMgr := network.NewManager(s.cfg.BridgeName, s.cfg.Subnet, s.cfg.Gateway, s.cfg.HostInterface)
 	imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
 
@@ -776,11 +801,11 @@ func (s *Server) handleAPIClusterDelete(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		fcClient.UpdateVMState(existingVM)
+		hypervisor.UpdateVMState(existingVM)
 		if existingVM.State == vm.StateRunning {
 			ctx := context.Background()
 			// Keep the VM record if the process survives, so it is not orphaned
-			if err := fcClient.Terminate(ctx, existingVM); err != nil {
+			if err := hypervisor.Terminate(ctx, existingVM); err != nil {
 				existingVM.State = vm.StateError
 				if saveErr := existingVM.Save(paths.VMs); saveErr != nil {
 					log.Printf("failed to save state for VM %s: %v", vmName, saveErr)

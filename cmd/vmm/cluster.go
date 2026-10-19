@@ -9,8 +9,9 @@ import (
 	"time"
 
 	"github.com/raesene/baremetalvmm/internal/cluster"
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/image"
+	"github.com/raesene/baremetalvmm/internal/lifecycle"
 	"github.com/raesene/baremetalvmm/internal/mount"
 	"github.com/raesene/baremetalvmm/internal/network"
 	"github.com/raesene/baremetalvmm/internal/sshkey"
@@ -27,6 +28,8 @@ func clusterCmd() *cobra.Command {
 	cmd.AddCommand(
 		clusterCreateCmd(),
 		clusterDeleteCmd(),
+		clusterStartCmd(),
+		clusterStopCmd(),
 		clusterListCmd(),
 		clusterKubeconfigCmd(),
 	)
@@ -43,6 +46,7 @@ func clusterCreateCmd() *cobra.Command {
 	var imageName string
 	var kernelName string
 	var adminWorkstation bool
+	var nested bool
 	var distro string
 	var openshiftVersion string
 	var cni string
@@ -89,24 +93,32 @@ func clusterCreateCmd() *cobra.Command {
 				sshKeyPath = defaults.SSHKeyPath
 			}
 
-			var sshPrivateKeyPath string
-			var useVMMKey bool
-			if sshKeyPath == "" {
+			// --ssh-key names a public key, which is added to the nodes
+			// alongside the managed key. Its private half, if it sits next
+			// to it, provisions the cluster; otherwise the managed key does.
+			var sshPrivateKeyPath, sshPubKeyPath string
+			if sshKeyPath != "" {
+				sshKeyPath = expandHomePath(sshKeyPath)
+				if strings.HasSuffix(sshKeyPath, ".pub") {
+					sshPubKeyPath = sshKeyPath
+					sshPrivateKeyPath = strings.TrimSuffix(sshKeyPath, ".pub")
+				} else {
+					sshPubKeyPath = sshKeyPath + ".pub"
+					sshPrivateKeyPath = sshKeyPath
+				}
+				if _, err := os.Stat(sshPubKeyPath); err != nil {
+					return fmt.Errorf("SSH public key not found at %s: %w", sshPubKeyPath, err)
+				}
+				if _, err := os.Stat(sshPrivateKeyPath); err != nil {
+					sshPrivateKeyPath = ""
+				}
+			}
+			if sshPrivateKeyPath == "" {
 				if err := sshkey.EnsureKeyPair(paths.SSH); err != nil {
 					return fmt.Errorf("failed to ensure vmm SSH key: %w", err)
 				}
 				sshPrivateKeyPath = sshkey.PrivateKeyPath(paths.SSH)
-				useVMMKey = true
 				fmt.Println("Using vmm-managed SSH key for cluster provisioning")
-			} else {
-				sshKeyPath = expandHomePath(sshKeyPath)
-				sshPrivateKeyPath = sshKeyPath
-				if len(sshKeyPath) > 4 && sshKeyPath[len(sshKeyPath)-4:] == ".pub" {
-					sshPrivateKeyPath = sshKeyPath[:len(sshKeyPath)-4]
-				}
-				if _, err := os.Stat(sshPrivateKeyPath); err != nil {
-					return fmt.Errorf("SSH private key not found at %s: %w", sshPrivateKeyPath, err)
-				}
 			}
 
 			// OpenShift (MicroShift) is single-node and needs a heavier control plane.
@@ -150,8 +162,10 @@ func clusterCreateCmd() *cobra.Command {
 					return fmt.Errorf("OpenShift requires at least 10240 MB disk (got %d)", disk)
 				}
 			} else {
-				if err := validate.K8sVersion(k8sVersion); err != nil {
-					return err
+				if k8sVersion != "" {
+					if err := validate.K8sVersionOrMinor(k8sVersion); err != nil {
+						return err
+					}
 				}
 				if cpus < 2 {
 					return fmt.Errorf("Kubernetes requires at least 2 CPUs (got %d)", cpus)
@@ -176,10 +190,10 @@ func clusterCreateCmd() *cobra.Command {
 
 			// Read SSH public key (if user provided one)
 			var sshPubKey string
-			if !useVMMKey {
-				keyData, err := os.ReadFile(sshKeyPath)
+			if sshPubKeyPath != "" {
+				keyData, err := os.ReadFile(sshPubKeyPath)
 				if err != nil {
-					return fmt.Errorf("failed to read SSH public key from %s: %w", sshKeyPath, err)
+					return fmt.Errorf("failed to read SSH public key from %s: %w", sshPubKeyPath, err)
 				}
 				sshPubKey = string(keyData)
 			}
@@ -218,21 +232,25 @@ func clusterCreateCmd() *cobra.Command {
 					}
 				}
 
-				// Auto-detect k8s rootfs if no image specified
-				if imageName == "" {
-					if found := imgMgr.FindK8sRootfs(k8sVersion); found != "" {
-						fmt.Printf("Using pre-built Kubernetes rootfs: %s\n", found)
-						imageName = found
-						cl.Image = imageName
-					} else {
-						downloaded, err := imgMgr.DownloadK8sRootfs(k8sVersion)
-						if err == nil && downloaded != "" {
-							fmt.Printf("Using downloaded Kubernetes rootfs: %s\n", downloaded)
-							imageName = downloaded
-							cl.Image = imageName
-						}
-					}
+				// The image and Kubernetes version must agree: pick one from the other.
+				chosen, version, err := cluster.ChooseK8sImage(imgMgr, imageName, k8sVersion)
+				if err != nil {
+					return err
 				}
+				if imageName == "" && chosen != "" {
+					fmt.Printf("Using pre-built Kubernetes rootfs: %s\n", chosen)
+				}
+				imageName = chosen
+				cl.Image = chosen
+				cl.K8sVersion = version
+			}
+
+			if nested {
+				if err := lifecycle.CheckNestedCluster(imgMgr, isOpenShift, kernelName); err != nil {
+					return err
+				}
+				cl.Nested = true
+				fmt.Println("Nodes will run nested under cloud-hypervisor")
 			}
 
 			// Set up admin workstation if requested, with its own key for SSH to the nodes
@@ -259,8 +277,12 @@ func clusterCreateCmd() *cobra.Command {
 			if isOpenShift {
 				fmt.Printf("Creating OpenShift cluster '%s' (MicroShift %s, single-node)\n", name, openshiftVersion)
 			} else {
+				version := cl.K8sVersion
+				if version == "" {
+					version = "(from image)"
+				}
 				fmt.Printf("Creating cluster '%s' with Kubernetes %s (%d control-plane + %d workers)\n",
-					name, k8sVersion, 1, workers)
+					name, version, 1, workers)
 			}
 
 			// Create all VMs (cluster nodes + admin if enabled)
@@ -291,6 +313,7 @@ func clusterCreateCmd() *cobra.Command {
 					newVM.SSHPublicKey = sshkey.JoinKeys(sshPubKey, adminPubKey)
 				}
 				newVM.SocketPath = fmt.Sprintf("%s/%s.sock", paths.Sockets, vmName)
+				cl.ConfigureNodeVM(newVM)
 
 				if err := newVM.Save(paths.VMs); err != nil {
 					return fmt.Errorf("failed to save VM '%s': %w", vmName, err)
@@ -385,6 +408,9 @@ func clusterCreateCmd() *cobra.Command {
 			}
 			fmt.Printf("  Control plane: %s\n", cl.ControlPlaneIP)
 			fmt.Printf("  Nodes: %d\n", len(cl.ClusterVMs()))
+			if cl.Nested {
+				fmt.Println("  Node backend: cloud-hypervisor (nested; nodes have /dev/kvm)")
+			}
 			fmt.Printf("  Context: vmm-%s\n", name)
 			if cl.AdminVM != "" {
 				fmt.Printf("  Admin workstation: %s (%s)\n", cl.AdminVM, adminIP)
@@ -402,12 +428,13 @@ func clusterCreateCmd() *cobra.Command {
 	cmd.Flags().IntVar(&cpus, "cpus", 2, "CPUs per node")
 	cmd.Flags().IntVar(&memory, "memory", 4096, "Memory per node in MB")
 	cmd.Flags().IntVar(&disk, "disk", 10240, "Disk per node in MB")
-	cmd.Flags().StringVar(&k8sVersion, "k8s-version", "1.36.0", "Kubernetes version (kubeadm only)")
+	cmd.Flags().StringVar(&k8sVersion, "k8s-version", "", "Kubernetes version (kubeadm only): exact (1.36.5), or MAJOR.MINOR for its newest patch (default: newest "+cluster.DefaultK8sMinor+" patch, or the version of --image)")
 	cmd.Flags().StringVar(&openshiftVersion, "openshift-version", "4.20", "OpenShift/MicroShift major.minor version (openshift only)")
-	cmd.Flags().StringVar(&sshKeyPath, "ssh-key", "", "Path to SSH public key file")
+	cmd.Flags().StringVar(&sshKeyPath, "ssh-key", "", "Path to SSH public key to add to the nodes (its private key, if present, is used for provisioning)")
 	cmd.Flags().StringVar(&imageName, "image", "", "Name of rootfs image to use")
 	cmd.Flags().StringVar(&kernelName, "kernel", "", "Name of kernel to use")
 	cmd.Flags().StringVar(&cni, "cni", "cilium", "CNI plugin: 'cilium' (default) or 'calico'")
+	cmd.Flags().BoolVar(&nested, "nested", false, "Run the nodes nested under cloud-hypervisor so they can run VMs (e.g. Kata Containers); kubeadm only")
 	cmd.Flags().BoolVar(&adminWorkstation, "admin-workstation", false, "Create an admin workstation VM with security tools and cluster kubeconfig")
 	cmd.RegisterFlagCompletionFunc("kernel", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return completeKernelNames(cmd, nil, toComplete)
@@ -420,91 +447,15 @@ func clusterCreateCmd() *cobra.Command {
 }
 
 func startClusterVM(vmName string) (string, error) {
-	paths := cfg.GetPaths()
-
-	existingVM, err := vm.Load(paths.VMs, vmName)
+	existingVM, err := vm.Load(cfg.GetPaths().VMs, vmName)
 	if err != nil {
 		return "", fmt.Errorf("VM '%s' not found", vmName)
 	}
-
-	imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
-	if err := imgMgr.EnsureDefaultImages(); err != nil {
-		return "", fmt.Errorf("failed to ensure images: %w", err)
+	if err := lifecycle.Start(cfg, existingVM, lifecycle.Options{
+		Warn: func(msg string) { fmt.Printf("  Warning: %s\n", msg) },
+	}); err != nil {
+		return "", err
 	}
-
-	vmRootfs, err := imgMgr.CreateVMRootfs(vmName, paths.VMs, existingVM.DiskSizeMB, existingVM.Image)
-	if err != nil {
-		return "", fmt.Errorf("failed to create VM rootfs: %w", err)
-	}
-	existingVM.RootfsPath = vmRootfs
-	existingVM.KernelPath = imgMgr.GetKernelPath(existingVM.Kernel)
-
-	if err := sshkey.EnsureKeyPair(paths.SSH); err != nil {
-		return "", fmt.Errorf("failed to ensure vmm SSH key: %w", err)
-	}
-	authorizedKeys, err := sshkey.BuildAuthorizedKeys(paths.SSH, existingVM.SSHPublicKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to build authorized keys: %w", err)
-	}
-	if err := image.InjectSSHKey(existingVM.RootfsPath, authorizedKeys); err != nil {
-		return "", fmt.Errorf("failed to inject SSH key: %w", err)
-	}
-
-	if err := image.InjectDNSConfig(existingVM.RootfsPath, existingVM.DNSServers); err != nil {
-		return "", fmt.Errorf("failed to inject DNS config: %w", err)
-	}
-
-	netMgr := network.NewManager(cfg.BridgeName, cfg.Subnet, cfg.Gateway, cfg.HostInterface)
-	if err := netMgr.EnsureBridge(); err != nil {
-		return "", fmt.Errorf("failed to setup bridge: %w", err)
-	}
-
-	if !netMgr.TapExists(existingVM.TapDevice) {
-		if err := netMgr.CreateTap(existingVM.TapDevice); err != nil {
-			return "", fmt.Errorf("failed to create TAP device: %w", err)
-		}
-	}
-
-	// Reuse existing IP if the VM already has one, otherwise allocate
-	if existingVM.IPAddress == "" {
-		ip, err := netMgr.AllocateIP(usedVMIPs(paths.VMs))
-		if err != nil {
-			return "", fmt.Errorf("failed to allocate IP: %w", err)
-		}
-		existingVM.IPAddress = ip
-	}
-
-	existingVM.State = vm.StateStarting
-	existingVM.Save(paths.VMs)
-
-	ctx := context.Background()
-	fcClient := firecracker.NewClient()
-	vmCfg := &firecracker.VMConfig{
-		SocketPath: existingVM.SocketPath,
-		KernelPath: existingVM.KernelPath,
-		RootfsPath: existingVM.RootfsPath,
-		CPUs:       existingVM.CPUs,
-		MemoryMB:   existingVM.MemoryMB,
-		TapDevice:  existingVM.TapDevice,
-		MacAddress: existingVM.MacAddress,
-		LogPath:    fmt.Sprintf("%s/%s.log", paths.Logs, vmName),
-		IPAddress:  existingVM.IPAddress,
-		Gateway:    cfg.Gateway,
-		Subnet:     cfg.Subnet,
-	}
-
-	machine, err := fcClient.StartVM(ctx, vmCfg)
-	if err != nil {
-		existingVM.State = vm.StateError
-		existingVM.Save(paths.VMs)
-		return "", fmt.Errorf("failed to start VM: %w", err)
-	}
-
-	existingVM.State = vm.StateRunning
-	existingVM.PID = fcClient.GetVMPID(machine)
-	existingVM.StartedAt = time.Now()
-	existingVM.Save(paths.VMs)
-
 	return existingVM.IPAddress, nil
 }
 
@@ -535,7 +486,6 @@ func clusterDeleteCmd() *cobra.Command {
 			fmt.Printf("Deleting cluster '%s'...\n", name)
 
 			// Delete all VMs
-			fcClient := firecracker.NewClient()
 			netMgr := network.NewManager(cfg.BridgeName, cfg.Subnet, cfg.Gateway, cfg.HostInterface)
 			imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
 
@@ -547,11 +497,11 @@ func clusterDeleteCmd() *cobra.Command {
 					continue
 				}
 
-				fcClient.UpdateVMState(existingVM)
+				hypervisor.UpdateVMState(existingVM)
 				if existingVM.State == vm.StateRunning {
 					fmt.Printf("  Stopping VM '%s'...\n", vmName)
 					ctx := context.Background()
-					if err := fcClient.Terminate(ctx, existingVM); err != nil {
+					if err := hypervisor.Terminate(ctx, existingVM); err != nil {
 						// Keep the VM's state file so the surviving process
 						// stays traceable instead of being orphaned.
 						fmt.Printf("  Warning: %v; keeping VM '%s'\n", err, vmName)
@@ -629,7 +579,6 @@ func clusterListCmd() *cobra.Command {
 			fmt.Fprintln(w, "NAME\tSTATE\tTYPE\tCNI\tVERSION\tNODES\tCONTROL PLANE IP\tCONTEXT")
 			for _, cl := range clusters {
 				// Update VM states
-				fcClient := firecracker.NewClient()
 				allRunning := true
 				for _, vmName := range cl.AllVMs() {
 					v, err := vm.Load(paths.VMs, vmName)
@@ -637,7 +586,7 @@ func clusterListCmd() *cobra.Command {
 						allRunning = false
 						continue
 					}
-					fcClient.UpdateVMState(v)
+					hypervisor.UpdateVMState(v)
 					if v.State != vm.StateRunning {
 						allRunning = false
 					}
@@ -691,14 +640,7 @@ func clusterKubeconfigCmd() *cobra.Command {
 				return fmt.Errorf("cluster '%s' has no control plane IP (not yet started?)", name)
 			}
 
-			// Resolve SSH private key path
-			sshPrivateKeyPath := cl.SSHKeyPath
-			if len(sshPrivateKeyPath) > 4 && sshPrivateKeyPath[len(sshPrivateKeyPath)-4:] == ".pub" {
-				sshPrivateKeyPath = sshPrivateKeyPath[:len(sshPrivateKeyPath)-4]
-			}
-			sshPrivateKeyPath = expandHomePath(sshPrivateKeyPath)
-
-			cpClient, err := cluster.WaitForSSH(cl.ControlPlaneIP, sshPrivateKeyPath, 30*time.Second)
+			cpClient, err := cluster.WaitForSSH(cl.ControlPlaneIP, clusterSSHKeyPath(cl), 30*time.Second)
 			if err != nil {
 				return fmt.Errorf("failed to connect to control plane: %w", err)
 			}

@@ -5,7 +5,7 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/vm"
 	"github.com/spf13/cobra"
 )
@@ -31,13 +31,12 @@ func listCmd() *cobra.Command {
 			}
 
 			// Update state for each VM
-			fcClient := firecracker.NewClient()
 			for _, v := range vms {
-				fcClient.UpdateVMState(v)
+				hypervisor.UpdateVMState(v)
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tID\tSTATE\tCPUs\tMEMORY\tIP ADDRESS")
+			fmt.Fprintln(w, "NAME\tID\tSTATE\tCPUs\tMEMORY\tIP ADDRESS\tBACKEND")
 			for _, v := range vms {
 				if !all && v.State == vm.StateStopped {
 					continue
@@ -46,8 +45,8 @@ func listCmd() *cobra.Command {
 				if ip == "" {
 					ip = "-"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d MB\t%s\n",
-					v.Name, v.ID, v.State, v.CPUs, v.MemoryMB, ip)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d MB\t%s\t%s\n",
+					v.Name, v.ID, v.State, v.CPUs, v.MemoryMB, ip, backendLabel(v))
 			}
 			w.Flush()
 
@@ -58,4 +57,13 @@ func listCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&all, "all", "a", true, "Show all VMs including stopped")
 
 	return cmd
+}
+
+// backendLabel names the hypervisor a VM runs under, without spaces so the
+// list stays easy to split into columns.
+func backendLabel(v *vm.VM) string {
+	if v.Nested {
+		return hypervisor.Name(v) + "+nested"
+	}
+	return hypervisor.Name(v)
 }

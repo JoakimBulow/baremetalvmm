@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/raesene/baremetalvmm/internal/cluster"
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/vm"
 )
 
@@ -24,9 +24,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	paths := s.cfg.GetPaths()
 
 	vms, _ := vm.List(paths.VMs)
-	fcClient := firecracker.NewClient()
 	for _, v := range vms {
-		fcClient.UpdateVMState(v)
+		hypervisor.UpdateVMState(v)
 	}
 
 	clusters, _ := cluster.List(paths.Clusters)

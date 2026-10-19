@@ -5,7 +5,7 @@
 VMM ships with two kernels and two root filesystems, each designed for a specific use case. The `vmm image list` command shows all available options with descriptions:
 
 ```
-$ vmm image list
+$ sudo vmm image list
 Kernels:
   - k8s-kernel             32.4 MB  Kubernetes cluster kernel (Linux 6.6 LTS, Cilium/BPF)
   - security-kernel        85.2 MB  Security testing kernel (Linux 6.12 LTS, broad module coverage)
@@ -24,6 +24,8 @@ Root filesystems:
 | Kubernetes clusters | `k8s-kernel` | `k8s-<version>` (auto-detected) | `sudo vmm cluster create mycluster` |
 | Security/vuln testing | `security-kernel` | `rootfs` (default) or `k8s-<version>` | `sudo vmm create testvm --kernel security-kernel` |
 | Memory bug detection | `kasan-kernel` | `rootfs` (default) | `sudo vmm create testvm --kernel kasan-kernel --memory 1024` |
+| Nested VMs (VMs inside VMs) | `nested-kernel` (auto-selected) | `rootfs` (default) | `sudo vmm create lab --nested` |
+| Nested clusters (Kata Containers) | `k8s-kernel` (has KVM) | `k8s-<version>` (auto-detected) | `sudo vmm cluster create lab --nested` |
 
 ### Naming Convention
 
@@ -35,6 +37,7 @@ Kernels and rootfs images follow a prefix-based naming convention so that `vmm i
 | `k8s-` | Kubernetes/Cilium (Linux 6.6 LTS, BPF JIT, VXLAN, modules) | Kubernetes (kubeadm/containerd pre-installed) |
 | `security-` | Security testing (Linux 6.12 LTS, broad module coverage) | *(not yet used)* |
 | `kasan-` | KASAN security kernel (memory sanitizer + broad modules) | *(not yet used)* |
+| `nested-` | Nested virtualization (Linux 6.1 LTS, KVM, for Cloud Hypervisor) | *(not yet used)* |
 | `debug-` | Debug kernel (extra logging and debug options) | *(not yet used)* |
 | `minimal-` | Minimal kernel (reduced feature set) | Minimal image (reduced package set) |
 
@@ -45,7 +48,7 @@ When adding new kernel or rootfs variants, use an appropriate prefix so that the
 Use `--remote` on the list commands to see what kernels and rootfs images are available on GitHub releases, along with whether each is already downloaded locally:
 
 ```bash
-$ vmm kernel list --remote
+$ sudo vmm kernel list --remote
 Querying GitHub releases...
 Available kernels on GitHub:
   ✓ security-kernel       Security testing kernel (security-kernel-6.6.143, broad module coverage)
@@ -55,7 +58,7 @@ Available kernels on GitHub:
 
   ✓ = already downloaded
 
-$ vmm image list --remote
+$ sudo vmm image list --remote
 Querying GitHub releases...
 Available rootfs images on GitHub:
   ✓ rootfs                Ubuntu 24.04 base rootfs (rootfs-24.04-20260629)
@@ -81,6 +84,22 @@ sudo vmm kernel pull security-kernel --force
 ```
 
 Without arguments, `vmm image pull` downloads the default kernel and rootfs if they are not already present (backward-compatible behavior).
+
+The security and KASAN kernels are released for several LTS series. `security-kernel` and `kasan-kernel` are the 6.12 builds; the other series pull as `security-kernel-<series>` and `kasan-kernel-<series>` (e.g. `sudo vmm kernel pull kasan-kernel-5.10`).
+
+### Keeping Downloads Up to Date
+
+Kernels are re-released when their build profile changes (`k8s-kernel-6.6.159-r3`), and k8s rootfs images are rebuilt in place. `vmm kernel list` and `vmm image list` end with any newer releases of what you have locally, and the commands to fetch them:
+
+```
+Newer releases available:
+  k8s-kernel           k8s-kernel-6.6.159-r3 (published 2026-10-18)
+                         sudo vmm kernel pull k8s-kernel --force
+  k8s-1.36.2           k8s-rootfs-1.36.5 (published 2026-10-18)
+                         sudo vmm image pull k8s-1.36.5
+```
+
+In `--remote` listings, `↑` marks a release newer than the local copy. The web UI shows the same list on the Images page, with Update buttons, and a count in the sidebar. A local file counts as out of date when the release was published after it was written. The GitHub release list is cached for 12 hours by the CLI (15 minutes on the Images page) to stay inside GitHub's unauthenticated API limit. Set `VMM_NO_UPDATE_CHECK=1` to turn the checks off.
 
 ## Custom Rootfs from Docker
 
@@ -124,7 +143,7 @@ sudo vmm create template --cpus 2 --memory 1024 --ssh-key ~/.ssh/id_ed25519.pub
 sudo vmm start template
 
 # SSH in and install your tools
-vmm ssh template
+sudo vmm ssh template
 # root@template:~# apt-get install -y python3 nodejs git
 # root@template:~# exit
 
@@ -184,6 +203,12 @@ sudo vmm kernel build --version 6.1 --name kernel-6.1
 # Supported versions: 5.10, 6.1, 6.6, 6.12
 ```
 
+Choose a profile with `--profile`. The `nested` profile adds KVM, vhost and the ACPI button driver to the default kernel, for [nested VMs](nested-virtualization.md):
+
+```bash
+sudo vmm kernel build --version 6.1 --name nested-kernel --profile nested
+```
+
 For the security testing profile with broad subsystem coverage, or the KASAN profile for memory corruption detection, use the build script directly:
 
 ```bash
@@ -209,7 +234,7 @@ The build script downloads kernel source from kernel.org, applies Firecracker's 
 ```bash
 sudo vmm create myvm --kernel kernel-6.1 --ssh-key ~/.ssh/id_ed25519.pub
 sudo vmm start myvm
-vmm ssh myvm -- uname -r
+sudo vmm ssh myvm -- uname -r
 ```
 
 ### Deleting a Kernel

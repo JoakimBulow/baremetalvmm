@@ -132,6 +132,12 @@ export_docker_image() {
 
     docker export "$CONTAINER_ID" | tar -xf - -C "$export_dir"
 
+    # docker export always adds /.dockerenv. Left in the image, it makes
+    # systemd-detect-virt report "docker" inside the VM, so systemd skips
+    # container-unsafe setup (securityfs is not mounted) and AppArmor refuses
+    # to start.
+    rm -f "$export_dir/.dockerenv"
+
     docker rm "$CONTAINER_ID" >/dev/null
     CONTAINER_ID=""
 
@@ -186,7 +192,17 @@ configure_rootfs() {
             apt-transport-https \
             ca-certificates \
             curl \
-            gpg
+            gpg \
+            apparmor \
+            lvm2 \
+            thin-provisioning-tools \
+            jq
+
+        # The rootfs has no udev, so device-mapper must not wait for udev to
+        # create /dev/mapper nodes. Without this LVM thin pools hang and
+        # containerd's devmapper snapshotter (needed by Kata's Firecracker
+        # shim) leaves half-created devices behind.
+        sed -i -E 's/^([[:space:]]*)#?[[:space:]]*udev_sync = [01]/\1udev_sync = 0/; s/^([[:space:]]*)#?[[:space:]]*udev_rules = [01]/\1udev_rules = 0/' /etc/lvm/lvm.conf
 
         # Configure containerd with SystemdCgroup
         mkdir -p /etc/containerd
@@ -211,7 +227,7 @@ configure_rootfs() {
 
         # Install kubeadm, kubelet, kubectl
         apt-get update -qq
-        apt-get install -qq -y kubelet=${k8s_version}-* kubeadm=${k8s_version}-* kubectl=${k8s_version}-*
+        apt-get install -qq -y kubelet=${k8s_version}-* kubeadm=${k8s_version}-* kubectl=${k8s_version}-* cri-tools
         apt-mark hold kubelet kubeadm kubectl
 
         # Enable kubelet
@@ -233,6 +249,26 @@ configure_rootfs() {
     cat > "$rootfs_dir/etc/sysctl.d/k8s.conf" <<'SYSCTL_EOF'
 net.ipv4.ip_forward = 1
 SYSCTL_EOF
+
+    # Match Ubuntu's kernel default: unprivileged users (and containers)
+    # can't read the kernel log
+    cat > "$rootfs_dir/etc/sysctl.d/10-vmm-dmesg.conf" <<'SYSCTL_EOF'
+kernel.dmesg_restrict = 1
+SYSCTL_EOF
+
+    # dmsetup, which containerd's devmapper snapshotter runs, must create
+    # device nodes itself (there's no udev)
+    mkdir -p "$rootfs_dir/etc/systemd/system/containerd.service.d"
+    cat > "$rootfs_dir/etc/systemd/system/containerd.service.d/10-vmm-no-udev.conf" <<'DROPIN_EOF'
+[Service]
+Environment=DM_DISABLE_UDEV=1
+DROPIN_EOF
+
+    # Point crictl at containerd
+    cat > "$rootfs_dir/etc/crictl.yaml" <<'CRICTL_EOF'
+runtime-endpoint: unix:///run/containerd/containerd.sock
+image-endpoint: unix:///run/containerd/containerd.sock
+CRICTL_EOF
 
     # Configure kernel modules for Kubernetes
     mkdir -p "$rootfs_dir/etc/modules-load.d"

@@ -164,3 +164,60 @@ func TestEnsureFirewalldZone(t *testing.T) {
 		})
 	}
 }
+
+func TestEnsureGatewayAddr(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing []string
+		want     []string
+	}{
+		{"only gateway", []string{"10.99.0.1/16"}, []string{
+			"ip addr replace 10.99.0.1/16 dev vmm-br0",
+		}},
+		{"stale default address removed", []string{"172.16.0.1/16", "10.99.0.1/16"}, []string{
+			"ip addr replace 10.99.0.1/16 dev vmm-br0",
+			"ip addr del 172.16.0.1/16 dev vmm-br0",
+		}},
+		{"old prefix removed", []string{"10.99.0.1/24", "10.99.0.1/16"}, []string{
+			"ip addr replace 10.99.0.1/16 dev vmm-br0",
+			"ip addr del 10.99.0.1/24 dev vmm-br0",
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls []string
+			m := &Manager{
+				BridgeName: "vmm-br0",
+				Subnet:     "10.99.0.0/16",
+				Gateway:    "10.99.0.1",
+				run: func(name string, args ...string) error {
+					calls = append(calls, name+" "+strings.Join(args, " "))
+					return nil
+				},
+				bridgeAddrs: func() ([]string, error) { return tt.existing, nil },
+			}
+			if err := m.ensureGatewayAddr(); err != nil {
+				t.Fatalf("ensureGatewayAddr: %v", err)
+			}
+			if strings.Join(calls, "\n") != strings.Join(tt.want, "\n") {
+				t.Errorf("calls:\n%s\nwant:\n%s", strings.Join(calls, "\n"), strings.Join(tt.want, "\n"))
+			}
+		})
+	}
+}
+
+func TestEnsureGatewayAddrReplaceFails(t *testing.T) {
+	m := &Manager{
+		BridgeName: "vmm-br0",
+		Subnet:     "10.99.0.0/16",
+		Gateway:    "10.99.0.1",
+		run:        func(string, ...string) error { return errors.New("boom") },
+		bridgeAddrs: func() ([]string, error) {
+			t.Fatal("addresses read after replace failed")
+			return nil, nil
+		},
+	}
+	if err := m.ensureGatewayAddr(); err == nil {
+		t.Fatal("want error when ip addr replace fails")
+	}
+}

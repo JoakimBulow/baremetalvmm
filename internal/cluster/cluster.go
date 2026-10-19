@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
+	"github.com/raesene/baremetalvmm/internal/vm"
 )
 
 type State string
@@ -63,6 +66,10 @@ type Cluster struct {
 	Image          string    `json:"image,omitempty"`
 	Kernel         string    `json:"kernel,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
+	// Nested runs the nodes under Cloud Hypervisor with hardware
+	// virtualization exposed, so they can run VMs themselves (Kata
+	// Containers, KubeVirt). The admin workstation stays on Firecracker.
+	Nested bool `json:"nested,omitempty"`
 }
 
 func NormalizeCNI(s string) string {
@@ -119,6 +126,16 @@ func (c *Cluster) ClusterVMs() []string {
 	vms := []string{c.ControlPlaneVM}
 	vms = append(vms, c.WorkerVMs...)
 	return vms
+}
+
+// ConfigureNodeVM sets the backend of one of the cluster's VMs: nodes of a
+// nested cluster run nested under Cloud Hypervisor, everything else
+// (including the admin workstation) under the default backend.
+func (c *Cluster) ConfigureNodeVM(v *vm.VM) {
+	if c.Nested && v.Name != c.AdminVM {
+		v.Backend = hypervisor.CloudHypervisor
+		v.Nested = true
+	}
 }
 
 func (c *Cluster) SetError(msg string) {

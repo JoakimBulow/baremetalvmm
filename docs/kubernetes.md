@@ -10,7 +10,7 @@ A Kubernetes-compatible kernel (`k8s-kernel`) is downloaded automatically during
 sudo vmm kernel build --version 6.6 --name k8s-kernel
 ```
 
-VMM auto-generates an Ed25519 SSH key pair at `/var/lib/vmm/ssh/vmm_ed25519` and uses it for cluster provisioning (running kubeadm over SSH) when no `--ssh-key` is provided. You can optionally pass your own key with `--ssh-key`, which is added alongside the managed key.
+VMM auto-generates an Ed25519 SSH key pair at `/var/lib/vmm/ssh/vmm_ed25519` and uses it for cluster provisioning (running kubeadm over SSH) when no `--ssh-key` is provided. You can optionally pass your own public key with `--ssh-key`, which is added to the nodes alongside the managed key. If its private key sits next to it (`~/.ssh/id_ed25519` for `~/.ssh/id_ed25519.pub`), vmm provisions with that; otherwise it provisions with the managed key.
 
 If your SSH key has a passphrase, make sure it's loaded in ssh-agent and use `sudo -E` to preserve the agent socket:
 
@@ -65,8 +65,8 @@ kubectl get nodes
 You can also SSH into individual nodes for debugging:
 
 ```bash
-vmm ssh mycluster-control-plane
-vmm ssh mycluster-worker-1
+sudo vmm ssh mycluster-control-plane
+sudo vmm ssh mycluster-worker-1
 ```
 
 ## Create Options
@@ -79,12 +79,23 @@ Flags:
   --cpus int             vCPUs per node (default 2)
   --memory int           Memory per node in MB (default 4096)
   --disk int             Disk per node in MB (default 10240)
-  --k8s-version string   Kubernetes version (default "1.36.0")
+  --k8s-version string   Kubernetes version: exact (1.36.5) or MAJOR.MINOR for its newest patch
+                         (default: newest 1.36 patch, or the version of --image)
   --ssh-key string       Path to SSH public key (optional; managed key used if omitted)
   --cni string           CNI plugin: 'cilium' (default) or 'calico'
   --kernel string        Kernel name (k8s-kernel recommended)
   --image string         Rootfs image name
   --admin-workstation    Create an admin workstation VM with security tools and cluster kubeconfig
+  --nested               Run the nodes under Cloud Hypervisor with /dev/kvm, e.g. for Kata Containers
+                         (see Nested Clusters below)
+```
+
+## Nested Clusters
+
+`--nested` runs the nodes under Cloud Hypervisor with `/dev/kvm`, so pods can run in VMs with Kata Containers (or VMs can run with KubeVirt). It needs Cloud Hypervisor, nested KVM on the host and a `k8s-kernel` with KVM support. See [Nested Clusters](nested-virtualization.md#nested-clusters-kata-containers) for setup and a Kata walkthrough.
+
+```bash
+sudo vmm cluster create lab --nested --workers 1 --cpus 4 --memory 8192
 ```
 
 ## Admin Workstation
@@ -96,7 +107,7 @@ You can optionally attach an **admin workstation** VM to a cluster. This is a se
 sudo vmm cluster create mycluster --workers 2 --admin-workstation
 
 # SSH into the admin workstation
-vmm ssh mycluster-admin
+sudo vmm ssh mycluster-admin
 
 # kubectl is pre-configured
 root@mycluster-admin:~# kubectl get nodes
@@ -119,6 +130,15 @@ The admin workstation is also available as a checkbox in the web UI cluster crea
 
 When a cluster has an admin workstation, vmm generates a key pair just for that cluster (`/var/lib/vmm/ssh/clusters/{cluster}_ed25519`). The public key is added to the cluster nodes' authorized keys, so it's re-injected every time a node starts. The private key is copied to the workstation at `/root/.ssh/vmm_cluster_ed25519`, and `/etc/ssh/ssh_config.d/vmm-cluster.conf` maps each node name and IP to it. The key only works on that cluster's nodes, not on other VMs on the host, and it's deleted along with the cluster.
 
+## Stopping and Starting a Cluster
+
+```bash
+sudo vmm cluster stop mycluster    # workers (and admin workstation) first, then the control plane
+sudo vmm cluster start mycluster   # control plane first, then waits for the nodes
+```
+
+`cluster start` waits until each node it started has posted a fresh Ready status. Until the kubelets report, the API server still serves the Ready status recorded before the cluster stopped, so `kubectl wait --for=condition=Ready` can pass too early after a restart. Use `--no-wait` to return as soon as the VMs are up.
+
 ## Deleting a Cluster
 
 ```bash
@@ -139,7 +159,7 @@ This stops and deletes all VMs in the cluster and removes the kubeconfig context
 | CPUs | 2 | Minimum 2 required for kubeadm |
 | Memory | 4096 MB | Minimum 2048 MB required |
 | Disk | 10240 MB (10 GB) | Needs space for container images |
-| Kubernetes | 1.36.0 | Any version available from pkgs.k8s.io |
+| Kubernetes | newest 1.36 patch | Any version available from pkgs.k8s.io |
 | CNI | Cilium | Cilium (with kube-proxy replacement) or Calico (Tigera operator, VXLAN/nftables) |
 | Pod CIDR | 10.244.0.0/16 | Doesn't conflict with VM bridge network |
 | Service CIDR | 10.96.0.0/12 | Standard Kubernetes default |

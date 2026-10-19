@@ -30,10 +30,12 @@ import (
 )
 
 const (
-	DefaultRepo      = "raesene/baremetalvmm"
-	DefaultAPIBase   = "https://api.github.com"
-	FirecrackerRepo  = "firecracker-microvm/firecracker"
-	DefaultGitHubURL = "https://github.com"
+	DefaultRepo     = "raesene/baremetalvmm"
+	DefaultAPIBase  = "https://api.github.com"
+	FirecrackerRepo = "firecracker-microvm/firecracker"
+	// CloudHypervisorRepo publishes the static cloud-hypervisor binaries.
+	CloudHypervisorRepo = "cloud-hypervisor/cloud-hypervisor"
+	DefaultGitHubURL    = "https://github.com"
 
 	// PrevSuffix is appended to a replaced binary so it can be rolled back.
 	PrevSuffix = ".prev"
@@ -308,6 +310,13 @@ type Bundle struct {
 	// FirecrackerVersion is the Firecracker version the release's installer
 	// pins (FC_VERSION in scripts/install.sh), e.g. "v1.16.0", or "".
 	FirecrackerVersion string
+
+	// CloudHypervisorVersion is the Cloud Hypervisor version the installer
+	// pins (CH_VERSION), e.g. "v54.0", or "" for releases before it did.
+	CloudHypervisorVersion string
+	// CloudHypervisorSHA256 maps a Go architecture to the pinned SHA256 of
+	// that architecture's static binary (CH_SHA256_<ARCH>).
+	CloudHypervisorSHA256 map[string]string
 }
 
 // Fetch downloads the release tarball for arch into dir, verifies it against
@@ -349,7 +358,9 @@ func (c *Client) Fetch(ctx context.Context, rel *Release, arch, dir string) (*Bu
 	}
 	if p := filepath.Join(b.Dir, "scripts"); fileExists(p) {
 		b.Scripts = p
-		b.FirecrackerVersion = firecrackerVersionFromInstaller(filepath.Join(p, "install.sh"))
+		installer, _ := os.ReadFile(filepath.Join(p, "install.sh"))
+		b.FirecrackerVersion = firecrackerVersionFromInstaller(installer)
+		b.CloudHypervisorVersion, b.CloudHypervisorSHA256 = cloudHypervisorFromInstaller(installer)
 	}
 	return b, nil
 }
@@ -412,15 +423,40 @@ func extractRelease(tarPath, dest string) error {
 
 var fcVersionRe = regexp.MustCompile(`(?m)^FC_VERSION="(v\d+\.\d+\.\d+)"`)
 
-func firecrackerVersionFromInstaller(installSh string) string {
-	data, err := os.ReadFile(installSh)
-	if err != nil {
-		return ""
-	}
-	if m := fcVersionRe.FindSubmatch(data); m != nil {
+func firecrackerVersionFromInstaller(installer []byte) string {
+	if m := fcVersionRe.FindSubmatch(installer); m != nil {
 		return string(m[1])
 	}
 	return ""
+}
+
+var (
+	// Cloud Hypervisor versions have two components, e.g. "v54.0".
+	chVersionRe = regexp.MustCompile(`(?m)^CH_VERSION="(v\d+\.\d+(?:\.\d+)?)"`)
+	chSHA256Re  = regexp.MustCompile(`(?m)^CH_SHA256_([A-Z0-9_]+)="([0-9a-f]{64})"`)
+)
+
+// cloudHypervisorFromInstaller reads the pinned Cloud Hypervisor version and
+// per-architecture checksums from install.sh. Without both, no version is
+// returned, so an unverifiable binary is never installed.
+func cloudHypervisorFromInstaller(installer []byte) (string, map[string]string) {
+	m := chVersionRe.FindSubmatch(installer)
+	if m == nil {
+		return "", nil
+	}
+	sums := map[string]string{}
+	for _, sm := range chSHA256Re.FindAllSubmatch(installer, -1) {
+		switch string(sm[1]) {
+		case "X86_64":
+			sums["amd64"] = string(sm[2])
+		case "AARCH64":
+			sums["arm64"] = string(sm[2])
+		}
+	}
+	if len(sums) == 0 {
+		return "", nil
+	}
+	return string(m[1]), sums
 }
 
 func fileExists(p string) bool {
@@ -546,6 +582,27 @@ func (c *Client) InstallFirecracker(ctx context.Context, version, arch, dst, wor
 	bin := filepath.Join(workDir, "firecracker")
 	if err := extractMember(tgz, member, bin); err != nil {
 		return fmt.Errorf("extracting Firecracker: %w", err)
+	}
+	return ReplaceFile(bin, dst, 0o755, true)
+}
+
+// ---------- Cloud Hypervisor ----------
+
+// InstallCloudHypervisor downloads the static cloud-hypervisor binary for a
+// release, verifies it against the SHA256 pinned in install.sh and installs
+// it at dst (keeping dst.prev). Running VMs keep the binary they started with.
+func (c *Client) InstallCloudHypervisor(ctx context.Context, version, sha256, arch, dst, workDir string) error {
+	if sha256 == "" {
+		return fmt.Errorf("no pinned checksum for Cloud Hypervisor on %s", arch)
+	}
+	name := "cloud-hypervisor-static"
+	if arch == "arm64" {
+		name += "-aarch64"
+	}
+	url := fmt.Sprintf("%s/%s/releases/download/%s/%s", c.GitHubURL, CloudHypervisorRepo, version, name)
+	bin := filepath.Join(workDir, "cloud-hypervisor")
+	if err := c.downloadVerified(ctx, url, bin, sha256); err != nil {
+		return err
 	}
 	return ReplaceFile(bin, dst, 0o755, true)
 }

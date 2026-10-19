@@ -121,6 +121,13 @@
                         value="{{.Defaults.SSHKeyPath}}" placeholder="~/.ssh/id_ed25519" class="input">
                     <p class="hint">If empty, the vmm-managed key is used for provisioning.</p>
                 </div>
+                <label class="check">
+                    <input type="checkbox" name="nested" id="nested">
+                    <span>
+                        <span class="label">Nested virtualization</span>
+                        <span class="hint block">Runs the nodes under Cloud Hypervisor with /dev/kvm, for Kata Containers or KubeVirt. Kubernetes clusters only; needs a k8s-kernel with KVM and nested KVM on this host.</span>
+                    </span>
+                </label>
                 {{if .HasSecurityImage}}
                 <label class="check">
                     <input type="checkbox" name="admin_workstation" id="admin_workstation">

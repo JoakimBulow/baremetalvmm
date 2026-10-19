@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/raesene/baremetalvmm/internal/cloudhypervisor"
 	"github.com/raesene/baremetalvmm/internal/firecracker"
 	"github.com/raesene/baremetalvmm/internal/upgrade"
 )
@@ -32,16 +33,19 @@ func upgradeCmd() *cobra.Command {
 		yes         bool
 		force       bool
 		updateUnits bool
+		withCH      bool
 		target      string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "upgrade",
-		Short: "Upgrade vmm, vmm-web and Firecracker to the latest release",
-		Long: `Upgrade vmm, vmm-web and Firecracker in place from GitHub releases.
+		Short: "Upgrade vmm, vmm-web, Firecracker and Cloud Hypervisor to the latest release",
+		Long: `Upgrade vmm, vmm-web and Firecracker in place from GitHub releases, and
+Cloud Hypervisor (used for nested VMs) if it is installed or
+--with-cloud-hypervisor is given.
 
 The release tarball is verified against the release's checksums.txt before
-anything is installed. Binaries are swapped atomically and the previous
+anything is installed; Cloud Hypervisor against the SHA256 the release pins. Binaries are swapped atomically and the previous
 versions are kept as <binary>.prev. Running VMs are never stopped: only the
 vmm-web service is restarted (if it is running) so it picks up the new binary.
 
@@ -49,7 +53,8 @@ Examples:
   vmm upgrade --check          # Is a newer release available?
   sudo vmm upgrade             # Upgrade to the latest release
   sudo vmm upgrade --version 0.13.1 --force   # Install a specific version
-  sudo vmm upgrade --rollback  # Restore the previous binaries`,
+  sudo vmm upgrade --rollback  # Restore the previous binaries
+  sudo vmm upgrade --with-cloud-hypervisor    # Also install Cloud Hypervisor`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 20*time.Minute)
@@ -68,7 +73,7 @@ Examples:
 			if rollback {
 				return upgradeRollback(paths)
 			}
-			return runUpgrade(ctx, paths, target, yes, force, updateUnits)
+			return runUpgrade(ctx, paths, target, yes, force, updateUnits, withCH)
 		},
 	}
 
@@ -78,6 +83,7 @@ Examples:
 	cmd.Flags().BoolVar(&force, "force", false, "Reinstall or downgrade, or replace a development build")
 	cmd.Flags().BoolVar(&updateUnits, "update-units", false, "Overwrite installed systemd units that differ from the release's")
 	cmd.Flags().BoolVar(&rollback, "rollback", false, "Restore the binaries saved by the last upgrade")
+	cmd.Flags().BoolVar(&withCH, "with-cloud-hypervisor", false, "Install Cloud Hypervisor (for nested VMs) if it isn't already")
 	cmd.MarkFlagsMutuallyExclusive("check", "rollback")
 	cmd.MarkFlagsMutuallyExclusive("version", "rollback")
 
@@ -85,7 +91,7 @@ Examples:
 }
 
 type installPaths struct {
-	VMM, VMMWeb, Firecracker string
+	VMM, VMMWeb, Firecracker, CloudHypervisor string
 }
 
 func resolveInstallPaths() (installPaths, error) {
@@ -102,10 +108,15 @@ func resolveInstallPaths() (installPaths, error) {
 			fc = p
 		}
 	}
+	ch, err := cloudhypervisor.NewClient().Binary()
+	if err != nil {
+		ch = cloudhypervisor.DefaultBin
+	}
 	return installPaths{
-		VMM:         exe,
-		VMMWeb:      filepath.Join(filepath.Dir(exe), "vmm-web"),
-		Firecracker: fc,
+		VMM:             exe,
+		VMMWeb:          filepath.Join(filepath.Dir(exe), "vmm-web"),
+		Firecracker:     fc,
+		CloudHypervisor: ch,
 	}, nil
 }
 
@@ -127,7 +138,7 @@ func upgradeCheck(ctx context.Context) error {
 	return nil
 }
 
-func runUpgrade(ctx context.Context, paths installPaths, target string, yes, force, updateUnits bool) error {
+func runUpgrade(ctx context.Context, paths installPaths, target string, yes, force, updateUnits, withCH bool) error {
 	client := upgrade.NewClient()
 
 	var rel *upgrade.Release
@@ -141,13 +152,19 @@ func runUpgrade(ctx context.Context, paths installPaths, target string, yes, for
 		return err
 	}
 
+	chOnly := false
 	if _, ok := upgrade.ParseVersion(version); !ok {
 		if !force {
 			return fmt.Errorf("this is a development build (%s); use --force to replace it with v%s", version, rel.Version)
 		}
 	} else if c := upgrade.Compare(rel.Version, version); c == 0 && !force {
-		fmt.Printf("vmm %s is already installed. Use --force to reinstall.\n", version)
-		return nil
+		if !withCH || chInstalled() {
+			fmt.Printf("vmm %s is already installed. Use --force to reinstall.\n", version)
+			return nil
+		}
+		// Up to date, but asked for Cloud Hypervisor: install just that,
+		// at the version this release pins.
+		chOnly = true
 	} else if c < 0 && !force {
 		return fmt.Errorf("v%s is older than the installed %s; use --force to downgrade", rel.Version, version)
 	}
@@ -167,12 +184,23 @@ func runUpgrade(ctx context.Context, paths installPaths, target string, yes, for
 
 	fcCurrent := firecracker.NewClient().Version()
 	fcWanted := bundle.FirecrackerVersion
-	fcUpgrade := fcWanted != "" && fcCurrent != fcWanted
-	webActive := unitActive(webUnit)
+	fcUpgrade := !chOnly && fcWanted != "" && fcCurrent != fcWanted
+	webActive := !chOnly && unitActive(webUnit)
+
+	// Cloud Hypervisor is optional: upgrade it if it's installed, install it
+	// only when asked.
+	chCurrent := cloudhypervisor.NewClient().Version()
+	chWanted := bundle.CloudHypervisorVersion
+	chSHA := bundle.CloudHypervisorSHA256[upgrade.Arch()]
+	chUpgrade := chWanted != "" && (chCurrent != "" || withCH) && chCurrent != chWanted
 
 	fmt.Println("\nUpgrade plan:")
-	fmt.Printf("  vmm          %s -> %s  (%s)\n", version, rel.Version, paths.VMM)
-	if bundle.VMMWeb != "" {
+	if chOnly {
+		fmt.Printf("  vmm          %s (unchanged)\n", version)
+	} else {
+		fmt.Printf("  vmm          %s -> %s  (%s)\n", version, rel.Version, paths.VMM)
+	}
+	if bundle.VMMWeb != "" && !chOnly {
 		note := ""
 		if webActive {
 			note = ", service will be restarted"
@@ -187,13 +215,30 @@ func runUpgrade(ctx context.Context, paths installPaths, target string, yes, for
 	case fcCurrent != "":
 		fmt.Printf("  firecracker  %s (unchanged)\n", fcCurrent)
 	}
+	switch {
+	case chUpgrade && chCurrent == "":
+		fmt.Printf("  cloud-hypervisor  install %s  (%s)\n", chWanted, paths.CloudHypervisor)
+	case chUpgrade:
+		fmt.Printf("  cloud-hypervisor  %s -> %s  (%s)\n", chCurrent, chWanted, paths.CloudHypervisor)
+	case chCurrent != "":
+		fmt.Printf("  cloud-hypervisor  %s (unchanged)\n", chCurrent)
+	case withCH:
+		fmt.Printf("  cloud-hypervisor  not installed: v%s doesn't pin a Cloud Hypervisor version\n", rel.Version)
+	}
 	fmt.Println("  Running VMs are not stopped.")
+	if chOnly && !chUpgrade {
+		return nil
+	}
 
 	if !yes && !confirm("\nProceed?") {
 		fmt.Println("Upgrade cancelled.")
 		return nil
 	}
 	fmt.Println()
+
+	if chOnly {
+		return installCloudHypervisor(ctx, client, paths, chWanted, chSHA, chCurrent, workDir)
+	}
 
 	// vmm first: if the new binary doesn't run, put the old one back and stop.
 	if err := upgrade.ReplaceFile(bundle.VMM, paths.VMM, 0o755, true); err != nil {
@@ -235,6 +280,12 @@ func runUpgrade(ctx context.Context, paths installPaths, target string, yes, for
 		}
 	}
 
+	if chUpgrade {
+		if err := installCloudHypervisor(ctx, client, paths, chWanted, chSHA, chCurrent, workDir); err != nil {
+			fmt.Printf("  [warn] %v\n", err)
+		}
+	}
+
 	if webActive {
 		if err := exec.Command("systemctl", "restart", webUnit).Run(); err != nil {
 			fmt.Printf("  [warn] restarting %s: %v\n", webUnit, err)
@@ -251,7 +302,7 @@ func runUpgrade(ctx context.Context, paths installPaths, target string, yes, for
 
 func upgradeRollback(paths installPaths) error {
 	restored := 0
-	for _, p := range []string{paths.VMM, paths.VMMWeb, paths.Firecracker} {
+	for _, p := range []string{paths.VMM, paths.VMMWeb, paths.Firecracker, paths.CloudHypervisor} {
 		if _, err := os.Stat(p + upgrade.PrevSuffix); err != nil {
 			continue
 		}
@@ -272,6 +323,30 @@ func upgradeRollback(paths installPaths) error {
 		}
 	}
 	fmt.Printf("\nNow running vmm %s.\n", binaryVersion(paths.VMM, "version", "--json"))
+	return nil
+}
+
+// chInstalled reports whether a cloud-hypervisor binary can be found.
+func chInstalled() bool {
+	_, err := cloudhypervisor.NewClient().Binary()
+	return err == nil
+}
+
+// installCloudHypervisor installs the pinned Cloud Hypervisor release and
+// reports the result.
+func installCloudHypervisor(ctx context.Context, client *upgrade.Client, paths installPaths, want, sha, current, workDir string) error {
+	fmt.Printf("  Downloading Cloud Hypervisor %s...\n", want)
+	if err := client.InstallCloudHypervisor(ctx, want, sha, upgrade.Arch(), paths.CloudHypervisor, workDir); err != nil {
+		return fmt.Errorf("cloud-hypervisor not installed: %w", err)
+	}
+	if current != "" {
+		fmt.Printf("  [ok] cloud-hypervisor %s (running VMs keep %s until restarted)\n", want, current)
+	} else {
+		fmt.Printf("  [ok] cloud-hypervisor %s\n", want)
+		if err := cloudhypervisor.HostNested(); err != nil {
+			fmt.Printf("  [note] %v\n", err)
+		}
+	}
 	return nil
 }
 

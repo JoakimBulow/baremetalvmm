@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/network"
 	"github.com/raesene/baremetalvmm/internal/validate"
 	"github.com/raesene/baremetalvmm/internal/vm"
@@ -30,8 +30,7 @@ func stopCmd() *cobra.Command {
 			}
 
 			// Update state
-			fcClient := firecracker.NewClient()
-			fcClient.UpdateVMState(existingVM)
+			hypervisor.UpdateVMState(existingVM)
 
 			if existingVM.State != vm.StateRunning {
 				return fmt.Errorf("VM '%s' is not running (state: %s)", name, existingVM.State)
@@ -45,7 +44,7 @@ func stopCmd() *cobra.Command {
 			// Terminate the Firecracker process, escalating to signals if the
 			// guest does not shut down. Returns only once the process is gone.
 			ctx := context.Background()
-			if err := fcClient.Terminate(ctx, existingVM); err != nil {
+			if err := hypervisor.Terminate(ctx, existingVM); err != nil {
 				existingVM.State = vm.StateError
 				if saveErr := existingVM.Save(paths.VMs); saveErr != nil {
 					fmt.Printf("Warning: failed to save VM state: %v\n", saveErr)
@@ -53,22 +52,29 @@ func stopCmd() *cobra.Command {
 				return fmt.Errorf("failed to stop VM '%s': %w", name, err)
 			}
 
-			// Clean up TAP device so it can be reused on next start
-			netMgr := network.NewManager(cfg.BridgeName, cfg.Subnet, cfg.Gateway, cfg.HostInterface)
-			if existingVM.TapDevice != "" && netMgr.TapExists(existingVM.TapDevice) {
-				if err := netMgr.DeleteTap(existingVM.TapDevice); err != nil {
-					fmt.Printf("Warning: failed to delete TAP device: %v\n", err)
-				}
-			}
-
-			clearPortForwards(netMgr, existingVM)
-
-			// Cleanup (Terminate already cleared the PID and removed the socket)
-			existingVM.State = vm.StateStopped
-			existingVM.Save(paths.VMs)
+			finishStop(network.NewManager(cfg.BridgeName, cfg.Subnet, cfg.Gateway, cfg.HostInterface), existingVM)
 
 			fmt.Printf("VM '%s' stopped\n", name)
 			return nil
 		},
+	}
+}
+
+// finishStop tidies up after a VM's hypervisor process has been terminated:
+// it removes the TAP device and port forwards and saves the VM as stopped.
+func finishStop(netMgr *network.Manager, v *vm.VM) {
+	// Clean up TAP device so it can be reused on next start
+	if v.TapDevice != "" && netMgr.TapExists(v.TapDevice) {
+		if err := netMgr.DeleteTap(v.TapDevice); err != nil {
+			fmt.Printf("Warning: failed to delete TAP device: %v\n", err)
+		}
+	}
+
+	clearPortForwards(netMgr, v)
+
+	// Cleanup (Terminate already cleared the PID and removed the socket)
+	v.State = vm.StateStopped
+	if err := v.Save(cfg.GetPaths().VMs); err != nil {
+		fmt.Printf("Warning: failed to save VM state: %v\n", err)
 	}
 }

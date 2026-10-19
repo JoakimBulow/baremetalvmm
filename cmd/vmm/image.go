@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/image"
 	"github.com/raesene/baremetalvmm/internal/validate"
 	"github.com/raesene/baremetalvmm/internal/vm"
@@ -40,16 +40,13 @@ func imageCmd() *cobra.Command {
 						fmt.Println("Available rootfs images on GitHub:")
 						found = true
 					}
-					status := "  "
-					if r.Downloaded {
-						status = "✓ "
-					}
+					status := releaseStatus(r)
 					fmt.Printf("  %s%-20s  %s  [%s]\n", status, r.LocalName, r.Description, r.Tag)
 				}
 				if !found {
 					fmt.Println("No rootfs releases found on GitHub.")
 				} else {
-					fmt.Println("\n  ✓ = already downloaded")
+					fmt.Println("\n  ✓ = already downloaded, ↑ = newer release than the local copy (pull with --force)")
 					fmt.Println("  Use 'vmm image pull <name>' to download an image")
 				}
 				return nil
@@ -85,6 +82,7 @@ func imageCmd() *cobra.Command {
 				}
 			}
 
+			printArtifactUpdates(imgMgr, "")
 			return nil
 		},
 	}
@@ -255,8 +253,7 @@ Examples:
 				return fmt.Errorf("VM '%s' not found: %w", vmName, err)
 			}
 
-			fcClient := firecracker.NewClient()
-			fcClient.UpdateVMState(existingVM)
+			hypervisor.UpdateVMState(existingVM)
 			if existingVM.State == vm.StateRunning {
 				return fmt.Errorf("VM '%s' is running. Stop it first before taking a snapshot", vmName)
 			}

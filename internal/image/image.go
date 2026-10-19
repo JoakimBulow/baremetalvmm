@@ -6,6 +6,7 @@ import (
 	"debug/elf"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -73,6 +74,7 @@ func (m *Manager) ImportDockerImage(dockerImage, imageName string, sizeMB int) e
 	if err := tarCmd.Wait(); err != nil {
 		return fmt.Errorf("failed to extract export: %w", err)
 	}
+	removeContainerMarkers(exportDir)
 
 	// Step 2: Install systemd and SSH if not present
 	fmt.Println("  Configuring rootfs for Firecracker...")
@@ -347,7 +349,6 @@ func createExt4Image(imagePath, sourceDir string, sizeMB int) error {
 	return nil
 }
 
-// runCmdOutput runs a command and returns its output
 // containerEngine returns the CLI used to export images: docker, or podman
 // (the default on Fedora and RHEL), whose create/export/rm commands match.
 func containerEngine() (string, error) {
@@ -356,9 +357,20 @@ func containerEngine() (string, error) {
 			return name, nil
 		}
 	}
-	return "", fmt.Errorf("image import needs docker or podman, and neither was found in PATH")
+	return "", errors.New("image import needs docker or podman, and neither was found in PATH")
 }
 
+// removeContainerMarkers deletes the files docker (/.dockerenv) and podman
+// (/run/.containerenv) add to every exported container. Left in a rootfs they
+// make systemd-detect-virt report a container inside the VM, so systemd skips
+// container-unsafe setup such as mounting securityfs, and AppArmor won't start.
+func removeContainerMarkers(rootfsDir string) {
+	for _, marker := range []string{".dockerenv", "run/.containerenv"} {
+		os.Remove(filepath.Join(rootfsDir, marker))
+	}
+}
+
+// runCmdOutput runs a command and returns its output
 func runCmdOutput(name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	output, err := cmd.Output()
@@ -414,8 +426,9 @@ type ghRelease struct {
 
 // ghAsset represents a GitHub release asset
 type ghAsset struct {
-	Name               string `json:"name"`
-	BrowserDownloadURL string `json:"browser_download_url"`
+	Name               string    `json:"name"`
+	BrowserDownloadURL string    `json:"browser_download_url"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // findLatestKernelURL queries GitHub releases for the latest kernel-* release
@@ -976,116 +989,6 @@ func listFiles(dir string) ([]string, error) {
 	return files, nil
 }
 
-// findLatestK8sRootfsURL queries GitHub releases for the latest k8s-rootfs-* release
-// matching the given k8s major.minor version. Returns the download URL and full k8s version.
-func findLatestK8sRootfsURL(k8sVersion string) (string, string) {
-	parts := strings.SplitN(k8sVersion, ".", 3)
-	if len(parts) < 2 {
-		return "", ""
-	}
-	majorMinor := parts[0] + "." + parts[1]
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(GitHubAPI)
-	if err != nil {
-		return "", ""
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", ""
-	}
-
-	var releases []ghRelease
-	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
-		return "", ""
-	}
-
-	for _, rel := range releases {
-		if !strings.HasPrefix(rel.TagName, "k8s-rootfs-"+majorMinor) {
-			continue
-		}
-		version := strings.TrimPrefix(rel.TagName, "k8s-rootfs-")
-		for _, asset := range rel.Assets {
-			if asset.Name == "k8s-rootfs.ext4.gz" {
-				return asset.BrowserDownloadURL, version
-			}
-		}
-	}
-
-	return "", ""
-}
-
-// FindK8sRootfs checks if a k8s rootfs image for the given version exists locally,
-// and if not, tries to download one from GitHub releases.
-// Returns the image name if found/downloaded, or empty string.
-func (m *Manager) FindK8sRootfs(k8sVersion string) string {
-	parts := strings.SplitN(k8sVersion, ".", 3)
-	if len(parts) < 2 {
-		return ""
-	}
-	majorMinor := parts[0] + "." + parts[1]
-
-	// Check for exact version match first
-	exactName := "k8s-" + k8sVersion
-	if m.ImageExists(exactName) {
-		return exactName
-	}
-
-	// Check for major.minor match (any patch)
-	entries, err := os.ReadDir(m.RootfsDir)
-	if err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			name := entry.Name()
-			if strings.HasPrefix(name, "k8s-"+majorMinor) && strings.HasSuffix(name, ".ext4") {
-				return strings.TrimSuffix(name, ".ext4")
-			}
-		}
-	}
-
-	return ""
-}
-
-// DownloadK8sRootfs downloads a pre-built k8s rootfs from GitHub releases.
-// Returns the image name if successful, or empty string.
-func (m *Manager) DownloadK8sRootfs(k8sVersion string) (string, error) {
-	url, version := findLatestK8sRootfsURL(k8sVersion)
-	if url == "" {
-		return "", fmt.Errorf("no pre-built Kubernetes rootfs found for version %s", k8sVersion)
-	}
-
-	imageName := "k8s-" + version
-	destPath := filepath.Join(m.RootfsDir, imageName+".ext4")
-
-	if _, err := os.Stat(destPath); err == nil {
-		return imageName, nil
-	}
-
-	fmt.Printf("Downloading pre-built Kubernetes %s rootfs...\n", version)
-
-	// Try to fetch checksum (best-effort for old releases)
-	expectedHash, checksumErr := m.fetchChecksum(url)
-
-	if checksumErr != nil {
-		if err := m.downloadAndDecompressGzip(url, destPath); err != nil {
-			return "", fmt.Errorf("failed to download k8s rootfs: %w", err)
-		}
-		fmt.Println("  Warning: no checksum file available, skipping integrity verification")
-	} else {
-		if err := m.downloadAndDecompressGzipVerified(url, destPath, expectedHash); err != nil {
-			return "", fmt.Errorf("failed to download k8s rootfs: %w", err)
-		}
-		fmt.Println("  Checksum verified")
-	}
-
-	fmt.Printf("Kubernetes rootfs downloaded: %s\n", imageName)
-
-	return imageName, nil
-}
-
 // FindSecurityRootfs returns the name of the newest security-* rootfs image
 // available locally, or empty string if none found.
 func (m *Manager) FindSecurityRootfs() string {
@@ -1111,6 +1014,52 @@ func (m *Manager) FindSecurityRootfs() string {
 
 // DefaultDNSServers are used when no custom DNS servers are specified
 var DefaultDNSServers = []string{"8.8.8.8", "8.8.4.4", "1.1.1.1"}
+
+// GuestSupport describes what a VM's rootfs offers the guest kernel.
+type GuestSupport struct {
+	// AppArmor is true if the rootfs has apparmor_parser. On an AppArmor
+	// kernel without it, containerd and Docker can't load their profiles
+	// and fail to create containers, so the VM should boot with apparmor=0.
+	AppArmor bool
+}
+
+// PrepareRootfs readies a VM's rootfs for boot and reports what it offers.
+// It removes container markers that images built before v0.17.1 still carry.
+func PrepareRootfs(rootfsPath string) (GuestSupport, error) {
+	mountPoint, err := os.MkdirTemp("", "vmm-rootfs-*")
+	if err != nil {
+		return GuestSupport{}, fmt.Errorf("failed to create mount point: %w", err)
+	}
+	defer os.RemoveAll(mountPoint)
+
+	if output, err := exec.Command("mount", "-o", "loop", rootfsPath, mountPoint).CombinedOutput(); err != nil {
+		return GuestSupport{}, fmt.Errorf("failed to mount rootfs: %w: %s", err, string(output))
+	}
+	defer func() { _ = exec.Command("umount", mountPoint).Run() }()
+
+	return prepareRootfsDir(mountPoint), nil
+}
+
+// prepareRootfsDir is PrepareRootfs on the mounted rootfs at root.
+func prepareRootfsDir(root string) GuestSupport {
+	removeContainerMarkers(root)
+	return GuestSupport{AppArmor: hasGuestFile(root, "usr/sbin/apparmor_parser") || hasGuestFile(root, "sbin/apparmor_parser")}
+}
+
+// hasGuestFile reports whether rel exists in the guest filesystem at root.
+// It doesn't follow symlinks, which in the guest would resolve on the host
+// (on merged-/usr images /sbin is one, and usr/sbin is checked anyway).
+func hasGuestFile(root, rel string) bool {
+	dir := root
+	for _, part := range strings.Split(filepath.Dir(rel), "/") {
+		dir = filepath.Join(dir, part)
+		if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+			return false
+		}
+	}
+	fi, err := os.Lstat(filepath.Join(root, rel))
+	return err == nil && fi.Mode().IsRegular()
+}
 
 // InjectDNSConfig injects DNS configuration into a rootfs image
 // This mounts the ext4 image and writes /etc/resolv.conf
@@ -1263,27 +1212,96 @@ WantedBy=multi-user.target
 // installMountService enables vmm-mounts.service in the mounted rootfs at
 // root, or removes it when the VM no longer has mounts.
 func installMountService(root string, enable bool) error {
-	unitPath := filepath.Join(root, "etc", "systemd", "system", mountServiceName)
+	return installUnit(root, mountServiceName, mountServiceUnit, enable)
+}
+
+// installUnit writes a systemd unit into the mounted rootfs at root and
+// enables it for multi-user.target, or removes it when enable is false.
+func installUnit(root, name, unit string, enable bool) error {
+	unitPath := filepath.Join(root, "etc", "systemd", "system", name)
 	wantsDir := filepath.Join(root, "etc", "systemd", "system", "multi-user.target.wants")
-	linkPath := filepath.Join(wantsDir, mountServiceName)
+	linkPath := filepath.Join(wantsDir, name)
 
 	os.Remove(linkPath)
 	if !enable {
 		if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to remove %s: %w", mountServiceName, err)
+			return fmt.Errorf("failed to remove %s: %w", name, err)
 		}
 		return nil
 	}
 	if err := os.MkdirAll(wantsDir, 0755); err != nil {
 		return fmt.Errorf("failed to create %s: %w", wantsDir, err)
 	}
-	if err := os.WriteFile(unitPath, []byte(mountServiceUnit), 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", mountServiceName, err)
+	if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", name, err)
 	}
-	if err := os.Symlink("/etc/systemd/system/"+mountServiceName, linkPath); err != nil {
-		return fmt.Errorf("failed to enable %s: %w", mountServiceName, err)
+	if err := os.Symlink("/etc/systemd/system/"+name, linkPath); err != nil {
+		return fmt.Errorf("failed to enable %s: %w", name, err)
 	}
 	return nil
+}
+
+const (
+	powerButtonServiceName = "vmm-powerbutton.service"
+	powerButtonScriptPath  = "/usr/local/sbin/vmm-powerbutton"
+)
+
+// powerButtonScript powers the guest off when its ACPI power button is
+// pressed, which is how Cloud Hypervisor asks a guest to shut down.
+// systemd-logind would do this, but it only watches buttons udev has tagged,
+// and the rootfs images have no udev. devtmpfs creates /dev/input/eventN
+// without it. Reads from an evdev device must fit a whole event, hence bs.
+const powerButtonScript = `#!/bin/sh
+# VMM generated: powers off when the ACPI power button is pressed
+for dev in /sys/class/input/event*; do
+	[ "$(cat "$dev/device/name" 2>/dev/null)" = "Power Button" ] || continue
+	# Block until the button sends an event, then shut down cleanly.
+	dd if="/dev/input/${dev##*/}" of=/dev/null bs=1024 count=1 status=none && exec systemctl poweroff
+done
+`
+
+const powerButtonServiceUnit = `# VMM generated: powers off when the ACPI power button is pressed
+[Unit]
+Description=Power off on the ACPI power button
+After=local-fs.target
+
+[Service]
+ExecStart=` + powerButtonScriptPath + `
+
+[Install]
+WantedBy=multi-user.target
+`
+
+// InjectPowerButtonService installs vmm-powerbutton.service into a rootfs
+// image, so Cloud Hypervisor can shut the guest down cleanly. It needs a
+// guest kernel with the ACPI button and evdev drivers (the nested profile);
+// without them it exits at boot and stops fall back to signals.
+func InjectPowerButtonService(rootfsPath string) error {
+	mountPoint, err := os.MkdirTemp("", "vmm-rootfs-*")
+	if err != nil {
+		return fmt.Errorf("failed to create mount point: %w", err)
+	}
+	defer os.RemoveAll(mountPoint)
+
+	if output, err := exec.Command("mount", "-o", "loop", rootfsPath, mountPoint).CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to mount rootfs: %w: %s", err, string(output))
+	}
+	defer func() { _ = exec.Command("umount", mountPoint).Run() }()
+
+	return installPowerButtonService(mountPoint)
+}
+
+// installPowerButtonService writes the power button script and unit into
+// the mounted rootfs at root.
+func installPowerButtonService(root string) error {
+	script := filepath.Join(root, powerButtonScriptPath)
+	if err := os.MkdirAll(filepath.Dir(script), 0755); err != nil {
+		return fmt.Errorf("failed to create %s: %w", filepath.Dir(script), err)
+	}
+	if err := os.WriteFile(script, []byte(powerButtonScript), 0755); err != nil {
+		return fmt.Errorf("failed to write %s: %w", powerButtonScriptPath, err)
+	}
+	return installUnit(root, powerButtonServiceName, powerButtonServiceUnit, true)
 }
 
 // InjectSSHKey injects an SSH public key into a rootfs image
@@ -1373,10 +1391,15 @@ type AvailableRelease struct {
 	Type        string // "kernel" or "rootfs"
 	Description string
 	Downloaded  bool // whether already present locally
+	// Published is when the release asset was last uploaded. Kernels are
+	// re-released as -rN and k8s rootfs images replaced in place.
+	Published time.Time
+	// Outdated is set when the local copy predates Published.
+	Outdated bool
 }
 
-// ListAvailableReleases queries GitHub for all downloadable kernel and rootfs releases
-func (m *Manager) ListAvailableReleases() ([]AvailableRelease, error) {
+// fetchReleases returns the project's GitHub releases, newest first.
+func fetchReleases() ([]ghRelease, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 
 	var releases []ghRelease
@@ -1404,13 +1427,37 @@ func (m *Manager) ListAvailableReleases() ([]AvailableRelease, error) {
 			break
 		}
 	}
+	return releases, nil
+}
 
+// ListAvailableReleases queries GitHub for all downloadable kernel and rootfs releases
+func (m *Manager) ListAvailableReleases() ([]AvailableRelease, error) {
+	releases, err := fetchReleases()
+	if err != nil {
+		return nil, err
+	}
+	m.saveReleaseCache(releases)
+	return m.availableReleases(releases), nil
+}
+
+// availableReleases picks the newest downloadable release of each kernel
+// and rootfs (each k8s minor version for k8s rootfs) and compares it with
+// the local copy.
+func (m *Manager) availableReleases(releases []ghRelease) []AvailableRelease {
 	type releaseSpec struct {
 		prefix    string
 		asset     string
 		localName string
 		typ       string
 		descFn    func(string) string
+	}
+
+	// Kernels released for several LTS series: this series gets the
+	// spec's local name, the others <local name>-<series>, as their
+	// release notes name them.
+	defaultSeries := map[string]string{
+		"security-kernel-": "6.12",
+		"kasan-kernel-":    "6.12",
 	}
 
 	specs := []releaseSpec{
@@ -1422,6 +1469,8 @@ func (m *Manager) ListAvailableReleases() ([]AvailableRelease, error) {
 			func(tag string) string { return "Security testing kernel (" + tag + ", broad module coverage)" }},
 		{"kasan-kernel-", "kasan-vmlinux.bin", "kasan-kernel", "kernel",
 			func(tag string) string { return "KASAN security kernel (" + tag + ", memory sanitizer)" }},
+		{"nested-kernel-", "nested-vmlinux.bin", "nested-kernel", "kernel",
+			func(tag string) string { return "Nested virtualization kernel (" + tag + ", KVM)" }},
 		{"cifs-vuln-kernel-", "cifs-vuln-vmlinux.bin", "cifs-vuln-kernel", "kernel",
 			func(tag string) string { return "CIFS vuln testing kernel (" + tag + ", CVE-2026-46243)" }},
 		{"rootfs-", "rootfs.ext4.gz", "rootfs", "rootfs",
@@ -1442,14 +1491,27 @@ func (m *Manager) ListAvailableReleases() ([]AvailableRelease, error) {
 			if !strings.HasPrefix(rel.TagName, spec.prefix) {
 				continue
 			}
-			if spec.localName != "" && seen[spec.prefix] {
+			// The newest release of each artifact (each series of a
+			// multi-series kernel) wins; releases are newest first.
+			seenKey := spec.prefix
+			localName := spec.localName
+			if def, ok := defaultSeries[spec.prefix]; ok {
+				series := kernelSeries(strings.TrimPrefix(rel.TagName, spec.prefix))
+				if series == "" {
+					continue
+				}
+				seenKey += series
+				if series != def {
+					localName += "-" + series
+				}
+			}
+			if localName != "" && seen[seenKey] {
 				continue
 			}
 			for _, asset := range rel.Assets {
 				if asset.Name != spec.asset {
 					continue
 				}
-				localName := spec.localName
 				if localName == "" && spec.prefix == "k8s-rootfs-" {
 					version := strings.TrimPrefix(rel.TagName, "k8s-rootfs-")
 					localName = "k8s-" + version
@@ -1464,12 +1526,7 @@ func (m *Manager) ListAvailableReleases() ([]AvailableRelease, error) {
 					}
 				}
 
-				downloaded := false
-				if spec.typ == "kernel" {
-					downloaded = m.KernelExists(localName)
-				} else {
-					downloaded = m.ImageExists(localName)
-				}
+				localTime, downloaded := m.localModTime(spec.typ, localName)
 
 				result = append(result, AvailableRelease{
 					Tag:         rel.TagName,
@@ -1479,13 +1536,25 @@ func (m *Manager) ListAvailableReleases() ([]AvailableRelease, error) {
 					Type:        spec.typ,
 					Description: spec.descFn(rel.TagName),
 					Downloaded:  downloaded,
+					Published:   asset.UpdatedAt,
+					Outdated:    downloaded && localTime.Before(asset.UpdatedAt),
 				})
-				seen[spec.prefix] = true
+				seen[seenKey] = true
 			}
 		}
 	}
 
-	return result, nil
+	return result
+}
+
+// kernelSeries returns the LTS series of a kernel release version
+// ("6.12.113-r3" -> "6.12"), or "".
+func kernelSeries(version string) string {
+	parts := strings.SplitN(version, ".", 3)
+	if len(parts) < 3 {
+		return ""
+	}
+	return parts[0] + "." + parts[1]
 }
 
 // FindReleaseURL looks up a release download URL by tag and asset type (kernel or rootfs).
@@ -1568,6 +1637,8 @@ func describeKernel(name string, isDefault bool) string {
 		return "General-purpose VM kernel (Linux 6.1 LTS)"
 	case strings.HasPrefix(name, "k8s-"):
 		return "Kubernetes cluster kernel (Linux 6.6 LTS, Cilium/BPF)"
+	case strings.HasPrefix(name, "nested-"):
+		return "Nested virtualization kernel (Linux 6.1 LTS, KVM)"
 	case strings.HasPrefix(name, "cifs-vuln-"):
 		return "CIFS vuln testing kernel (CVE-2026-46243, Linux 6.12 LTS)"
 	case strings.HasPrefix(name, "kasan-"):
@@ -1717,7 +1788,7 @@ func (m *Manager) ListKernelsWithInfo() ([]KernelInfo, error) {
 
 	var kernels []KernelInfo
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 

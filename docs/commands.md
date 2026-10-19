@@ -1,12 +1,14 @@
 # CLI Command Reference
 
+Run vmm commands with `sudo`. The data directory (`/var/lib/vmm`) is root-only, so commands that read or change VMs, images, kernels or clusters fail with "permission denied" without it, including read-only ones like `vmm list`. The exceptions are `vmm version`, `vmm upgrade --check`, `vmm config show` and `vmm completion`. `vmm config init` needs sudo too, since it creates the data directories and writes `/etc/vmm/config.json`. The tables below leave `sudo` out for brevity.
+
 ## VM Lifecycle
 
 | Command | Description |
 |---------|-------------|
 | `vmm create <name>` | Create a new VM configuration (VM is not running yet) |
-| `vmm start <name>` | Start a VM - assigns IP address, sets up networking, boots VM (requires root) |
-| `vmm stop <name>` | Stop a running VM (requires root) |
+| `vmm start <name>` | Start a VM - assigns IP address, sets up networking, boots VM |
+| `vmm stop <name>` | Stop a running VM |
 | `vmm delete <name>` | Delete a VM and its resources |
 | `vmm list` | List all VMs |
 | `vmm set <name> autostart on\|off` | Choose whether the VM starts at boot (via `vmm.service`; new VMs default to on) |
@@ -28,7 +30,12 @@ Flags:
   --kernel string    Name of kernel to use (from 'vmm kernel import' or 'vmm kernel build')
   --mount string     Mount host directory in VM (format: /host/path:tag[:ro|rw], can be repeated)
   --no-autostart     Don't start this VM at boot
+  --backend string   Hypervisor: firecracker (default) or cloud-hypervisor
+  --nested           Let the VM run its own VMs (uses cloud-hypervisor and the
+                     nested-kernel kernel unless --kernel is given)
 ```
+
+Nested VMs need Cloud Hypervisor, nested KVM on the host and the `nested-kernel` kernel. See [Nested Virtualization](nested-virtualization.md).
 
 Example with all options:
 ```bash
@@ -139,15 +146,17 @@ Each mount is a copy of the host directory, taken into an ext4 image when the VM
 | `vmm kernel list --remote` | Show kernels available on GitHub releases |
 | `vmm kernel pull <name>` | Download a specific kernel from GitHub releases |
 | `vmm kernel import <path> --name <name>` | Import a custom kernel binary |
-| `vmm kernel build --version <ver> --name <name>` | Build a kernel from source |
+| `vmm kernel build --version <ver> --name <name> [--profile P]` | Build a kernel from source. Profiles: `default`, `k8s`, `nested`, `security`, `security-kasan` |
 | `vmm kernel delete <name>` | Delete a custom kernel |
 
 ## Clusters
 
 | Command | Description |
 |---------|-------------|
-| `vmm cluster create <name>` | Create a Kubernetes cluster (use `--admin-workstation` to add a security tooling VM) |
+| `vmm cluster create <name>` | Create a Kubernetes cluster (use `--admin-workstation` to add a security tooling VM, `--nested` for nodes that can run VMs, e.g. for Kata Containers) |
 | `vmm cluster delete <name>` | Delete a cluster and all its VMs |
+| `vmm cluster start <name> [--no-wait] [--timeout 5m]` | Start a cluster's VMs, control plane first, and wait for every node to report Ready |
+| `vmm cluster stop <name>` | Stop a cluster's VMs, workers first, then the control plane |
 | `vmm cluster list` | List all clusters |
 | `vmm cluster kubeconfig <name>` | Re-extract and merge kubeconfig |
 
@@ -162,9 +171,10 @@ sudo vmm upgrade -y                 # ...without asking
 sudo vmm upgrade --version 0.14.0   # Install a specific release (--force to downgrade or reinstall)
 sudo vmm upgrade --rollback         # Restore the binaries saved by the last upgrade
 sudo vmm upgrade --update-units     # Also overwrite installed systemd units that differ from the release's
+sudo vmm upgrade --with-cloud-hypervisor   # Also install Cloud Hypervisor, for nested VMs
 ```
 
-Running VMs are not stopped. `vmm-web.service` is restarted if it is running. Firecracker is upgraded when the release requires a newer version; running VMs keep their current Firecracker until they are restarted.
+Running VMs are not stopped. `vmm-web.service` is restarted if it is running. Firecracker is upgraded when the release requires a newer version; running VMs keep their current Firecracker until they are restarted. Cloud Hypervisor is upgraded the same way if it is installed, and verified against the SHA256 the release pins.
 
 ## Configuration
 

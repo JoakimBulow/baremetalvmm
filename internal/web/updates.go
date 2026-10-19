@@ -27,6 +27,11 @@ type updateChecker struct {
 	current string
 	latest  *upgrade.Release
 	lookup  func(context.Context) (*upgrade.Release, error)
+
+	// artifacts counts local kernels and rootfs images with a newer
+	// release; nil disables the check.
+	artifacts     func() int
+	artifactCount int
 }
 
 func newUpdateChecker(current string) *updateChecker {
@@ -42,6 +47,7 @@ func (u *updateChecker) run() {
 	}
 	for {
 		u.check()
+		u.checkArtifacts()
 		time.Sleep(updateCheckInterval)
 	}
 }
@@ -57,6 +63,29 @@ func (u *updateChecker) check() {
 	u.mu.Lock()
 	u.latest = rel
 	u.mu.Unlock()
+}
+
+// checkArtifacts recounts the artifact updates.
+func (u *updateChecker) checkArtifacts() {
+	if u.artifacts == nil {
+		return
+	}
+	u.setArtifactCount(u.artifacts())
+}
+
+// setArtifactCount records how many local artifacts have newer releases,
+// e.g. after the images page has listed them or a download replaced one.
+func (u *updateChecker) setArtifactCount(n int) {
+	u.mu.Lock()
+	u.artifactCount = n
+	u.mu.Unlock()
+}
+
+// artifactUpdates returns how many local artifacts have newer releases.
+func (u *updateChecker) artifactUpdates() int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.artifactCount
 }
 
 // available returns the newer release, or nil if the running version is

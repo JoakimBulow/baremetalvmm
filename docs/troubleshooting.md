@@ -4,13 +4,13 @@
 
 ```bash
 cat /var/lib/vmm/vms/<name>.json          # VM state
-cat /var/lib/vmm/logs/<name>.log          # Firecracker logs
+cat /var/lib/vmm/logs/<name>.log          # Firecracker or Cloud Hypervisor logs
 sudo vmm console <name> --full            # Serial console output (kernel boot, panics)
 sudo vmm console <name>                   # Tail + follow console output live
 ip link show vmm-br0                       # Bridge
 sudo iptables -t nat -L -n -v             # NAT rules
-ps aux | grep firecracker                  # Processes
-vmm ssh myvm -- 'getent hosts google.com'  # DNS from VM
+ps aux | grep -E 'firecracker|cloud-hypervisor'   # Processes
+sudo vmm ssh myvm -- 'getent hosts google.com'  # DNS from VM
 ```
 
 ## KVM Not Available
@@ -58,7 +58,7 @@ ip route | grep default
 # Example output: default via 192.168.1.1 dev wlp3s0
 
 # Check your config
-cat ~/.config/vmm/config.json
+cat /etc/vmm/config.json
 
 # Update host_interface if needed (e.g., change "eth0" to "wlp3s0")
 ```
@@ -89,6 +89,17 @@ Check Firecracker socket:
 ls -la /var/lib/vmm/sockets/
 ```
 
+## Stopping a VM Takes 30 Seconds
+
+vmm asks the guest to shut down (Ctrl+Alt+Del under Firecracker, the ACPI power button under Cloud Hypervisor) and waits up to 30 seconds for it to finish before sending a signal, which would lose any writes the guest hadn't flushed. A guest that shuts down cleanly stops in well under a second, or a few seconds for a Kubernetes node. If every stop takes 30 seconds, the VM's kernel can't see the request: kernels released before v0.17.0 were built without the AT keyboard driver Firecracker needs. Download current ones:
+
+```bash
+sudo vmm kernel pull vmlinux.bin --force   # the default kernel
+sudo vmm kernel pull k8s-kernel --force    # and any other kernels you use
+```
+
+The new kernel is used from the VM's next start.
+
 ## VM Shows as Stopped When Running
 
-Ensure you're checking with `vmm list` (no sudo required). The tool correctly detects running VMs even when run as non-root.
+Check with `sudo vmm list`. Without sudo, vmm can't read its data directory (`/var/lib/vmm` is root-only) and fails with "permission denied". A VM's state comes from its hypervisor process, not its socket file, so a VM whose process is alive is reported as running even if the socket has gone missing.

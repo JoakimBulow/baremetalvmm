@@ -6,7 +6,7 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/network"
 	"github.com/raesene/baremetalvmm/internal/snapshot"
 	"github.com/raesene/baremetalvmm/internal/validate"
@@ -56,8 +56,11 @@ func snapshotCreateCmd() *cobra.Command {
 				return fmt.Errorf("VM '%s' not found", vmName)
 			}
 
-			fcClient := firecracker.NewClient()
-			fcClient.UpdateVMState(v)
+			hv, err := hypervisor.SnapshotterFor(v)
+			if err != nil {
+				return err
+			}
+			hv.UpdateVMState(v)
 			if v.State != vm.StateRunning {
 				return fmt.Errorf("VM '%s' is not running (state: %s); snapshots capture a live VM's memory. Use 'vmm image snapshot' for a rootfs-only image", vmName, v.State)
 			}
@@ -69,7 +72,7 @@ func snapshotCreateCmd() *cobra.Command {
 
 			fmt.Printf("Creating snapshot '%s' of VM '%s' (this pauses the VM briefly)...\n", snapName, vmName)
 			ctx := context.Background()
-			meta, err := snapMgr.Create(ctx, fcClient, v, snapName, !stop)
+			meta, err := snapMgr.Create(ctx, hv, v, snapName, !stop)
 			if err != nil {
 				return fmt.Errorf("failed to create snapshot: %w", err)
 			}
@@ -79,7 +82,7 @@ func snapshotCreateCmd() *cobra.Command {
 				fmt.Printf("Stopping VM '%s'...\n", vmName)
 				v.State = vm.StateStopping
 				saveVMWarn(v, paths.VMs)
-				if err := fcClient.Terminate(ctx, v); err != nil {
+				if err := hypervisor.Terminate(ctx, v); err != nil {
 					v.State = vm.StateError
 					saveVMWarn(v, paths.VMs)
 					return fmt.Errorf("snapshot created, but failed to stop VM '%s': %w", vmName, err)
@@ -178,8 +181,14 @@ func snapshotRestoreCmd() *cobra.Command {
 				return err
 			}
 
-			fcClient := firecracker.NewClient()
-			fcClient.UpdateVMState(v)
+			hv, err := hypervisor.SnapshotterFor(v)
+			if err != nil {
+				return err
+			}
+			if err := meta.Compatible(hv); err != nil {
+				return err
+			}
+			hv.UpdateVMState(v)
 
 			ctx := context.Background()
 			netMgr := network.NewManager(cfg.BridgeName, cfg.Subnet, cfg.Gateway, cfg.HostInterface)
@@ -192,7 +201,7 @@ func snapshotRestoreCmd() *cobra.Command {
 				fmt.Printf("Stopping VM '%s'...\n", vmName)
 				v.State = vm.StateStopping
 				saveVMWarn(v, paths.VMs)
-				if err := fcClient.Terminate(ctx, v); err != nil {
+				if err := hypervisor.Terminate(ctx, v); err != nil {
 					v.State = vm.StateError
 					saveVMWarn(v, paths.VMs)
 					return fmt.Errorf("failed to stop VM '%s' before restore: %w", vmName, err)
@@ -207,8 +216,8 @@ func snapshotRestoreCmd() *cobra.Command {
 				saveVMWarn(v, paths.VMs)
 			}
 
-			if fcVer := fcClient.Version(); fcVer != "" && meta.FCVersion != "" && fcVer != meta.FCVersion {
-				fmt.Printf("Warning: snapshot was taken with Firecracker %s but %s is installed; restore may fail.\n", meta.FCVersion, fcVer)
+			if ver := hv.Version(); ver != "" && meta.BackendVersion != "" && ver != meta.BackendVersion {
+				fmt.Printf("Warning: snapshot was taken with %s %s but %s is installed; restore may fail.\n", meta.BackendName(), meta.BackendVersion, ver)
 			}
 
 			// Restore uses the snapshot's resource configuration.
@@ -217,7 +226,7 @@ func snapshotRestoreCmd() *cobra.Command {
 
 			fmt.Printf("Restoring VM '%s' from snapshot '%s'...\n", vmName, snapName)
 			logPath := fmt.Sprintf("%s/%s.log", paths.Logs, vmName)
-			if _, err := snapMgr.Restore(ctx, fcClient, netMgr, v, snapName, logPath, !noStart); err != nil {
+			if _, err := snapMgr.Restore(ctx, hv, netMgr, v, snapName, logPath, !noStart); err != nil {
 				v.State = vm.StateError
 				saveVMWarn(v, paths.VMs)
 				return fmt.Errorf("failed to restore snapshot: %w", err)
@@ -275,7 +284,7 @@ func snapshotShowCmd() *cobra.Command {
 			fmt.Fprintf(w, "Name:\t%s\n", s.Name)
 			fmt.Fprintf(w, "VM:\t%s (%s)\n", s.VMName, s.VMID)
 			fmt.Fprintf(w, "Created:\t%s\n", s.CreatedAt.Format("2006-01-02 15:04:05"))
-			fmt.Fprintf(w, "Firecracker:\t%s\n", s.FCVersion)
+			fmt.Fprintf(w, "Backend:\t%s %s\n", s.BackendName(), s.BackendVersion)
 			fmt.Fprintf(w, "CPUs:\t%d\n", s.CPUs)
 			fmt.Fprintf(w, "Memory:\t%d MB\n", s.MemoryMB)
 			fmt.Fprintf(w, "IP Address:\t%s\n", s.IPAddress)

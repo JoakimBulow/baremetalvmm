@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/network"
 	"github.com/raesene/baremetalvmm/internal/portforward"
 	"github.com/raesene/baremetalvmm/internal/snapshot"
@@ -37,8 +37,12 @@ func (s *Server) handleSnapshotCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fcClient := firecracker.NewClient()
-	fcClient.UpdateVMState(v)
+	hv, err := hypervisor.SnapshotterFor(v)
+	if err != nil {
+		httpError(w, r, err.Error(), http.StatusConflict)
+		return
+	}
+	hv.UpdateVMState(v)
 	if v.State != vm.StateRunning {
 		httpError(w, r, "VM must be running to take a snapshot", http.StatusConflict)
 		return
@@ -50,7 +54,7 @@ func (s *Server) handleSnapshotCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := snapMgr.Create(context.Background(), fcClient, v, snapName, true); err != nil {
+	if _, err := snapMgr.Create(context.Background(), hv, v, snapName, true); err != nil {
 		s.sseBroker.Note(kindVM, name, "failed", requestSource(r), "snapshot "+snapName+": "+err.Error())
 		httpError(w, r, err.Error(), http.StatusInternalServerError)
 		return
@@ -88,12 +92,20 @@ func (s *Server) handleSnapshotRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	hv, err := hypervisor.SnapshotterFor(v)
+	if err == nil {
+		err = meta.Compatible(hv)
+	}
+	if err != nil {
+		httpError(w, r, err.Error(), http.StatusConflict)
+		return
+	}
+
 	source := requestSource(r)
 	release := s.sseBroker.Hold(kindVM, name)
 	defer release()
 
-	fcClient := firecracker.NewClient()
-	fcClient.UpdateVMState(v)
+	hv.UpdateVMState(v)
 	ctx := context.Background()
 	netMgr := network.NewManager(s.cfg.BridgeName, s.cfg.Subnet, s.cfg.Gateway, s.cfg.HostInterface)
 
@@ -101,7 +113,7 @@ func (s *Server) handleSnapshotRestore(w http.ResponseWriter, r *http.Request) {
 	if v.State == vm.StateRunning {
 		v.State = vm.StateStopping
 		saveVMLog(v, paths.VMs)
-		if err := fcClient.Terminate(ctx, v); err != nil {
+		if err := hypervisor.Terminate(ctx, v); err != nil {
 			v.State = vm.StateError
 			saveVMLog(v, paths.VMs)
 			s.sseBroker.Record(kindVM, name, string(vm.StateError), source, "restore: "+err.Error())
@@ -125,7 +137,7 @@ func (s *Server) handleSnapshotRestore(w http.ResponseWriter, r *http.Request) {
 	v.MemoryMB = meta.MemoryMB
 
 	logPath := fmt.Sprintf("%s/%s.log", paths.Logs, name)
-	if _, err := snapMgr.Restore(ctx, fcClient, netMgr, v, snapName, logPath, true); err != nil {
+	if _, err := snapMgr.Restore(ctx, hv, netMgr, v, snapName, logPath, true); err != nil {
 		v.State = vm.StateError
 		saveVMLog(v, paths.VMs)
 		s.sseBroker.Record(kindVM, name, string(vm.StateError), source, "restore "+snapName+": "+err.Error())

@@ -9,7 +9,7 @@ import (
 
 	"github.com/raesene/baremetalvmm/internal/cluster"
 	"github.com/raesene/baremetalvmm/internal/config"
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/vm"
 )
 
@@ -239,10 +239,9 @@ func pollVMStates(cfg *config.Config) map[string]string {
 		log.Printf("activity poll: listing VMs: %v", err)
 		return nil
 	}
-	fcClient := firecracker.NewClient()
 	states := make(map[string]string, len(vms))
 	for _, v := range vms {
-		fcClient.UpdateVMState(v)
+		hypervisor.UpdateVMState(v)
 		states[v.Name] = string(v.State)
 	}
 	return states

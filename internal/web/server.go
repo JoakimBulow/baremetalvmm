@@ -65,6 +65,14 @@ func NewServer(cfg *config.Config, configPath, password, listenAddr string, ver 
 		maxUploadBytes: DefaultMaxUploadBytes,
 	}
 
+	s.updates.artifacts = func() int {
+		releases, err := s.availableReleases(updateCheckInterval)
+		if err != nil {
+			log.Printf("artifact update check: %v", err)
+		}
+		return len(s.imageManager().Updates(releases))
+	}
+
 	if err := s.loadTemplates(); err != nil {
 		return nil, fmt.Errorf("failed to load templates: %w", err)
 	}
@@ -307,6 +315,7 @@ func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, name string,
 	if u := s.updates.available(); u != nil {
 		data["Update"] = u
 	}
+	data["ArtifactUpdates"] = s.updates.artifactUpdates()
 
 	if cookie, err := r.Cookie("vmm_session"); err == nil {
 		data["CSRFToken"] = s.sessions.csrfToken(cookie.Value)

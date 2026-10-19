@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/image"
+	"github.com/raesene/baremetalvmm/internal/lifecycle"
 	"github.com/raesene/baremetalvmm/internal/mount"
 	"github.com/raesene/baremetalvmm/internal/network"
 	"github.com/raesene/baremetalvmm/internal/validate"
@@ -22,6 +24,8 @@ func createCmd() *cobra.Command {
 	var kernelName string
 	var mounts []string
 	var noAutostart bool
+	var backend string
+	var nested bool
 
 	cmd := &cobra.Command{
 		Use:   "create <name>",
@@ -80,8 +84,9 @@ func createCmd() *cobra.Command {
 				imageName = defaults.Image
 			}
 
-			// Kernel
-			if !cmd.Flags().Changed("kernel") && defaults.Kernel != "" {
+			// Kernel. The configured default is for ordinary VMs; a nested VM
+			// without --kernel gets the nested kernel instead.
+			if !cmd.Flags().Changed("kernel") && defaults.Kernel != "" && !nested {
 				kernelName = defaults.Kernel
 			}
 
@@ -113,6 +118,12 @@ func createCmd() *cobra.Command {
 
 			// Create image manager for validation
 			imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
+
+			var err error
+			backend, kernelName, err = lifecycle.ChooseBackend(imgMgr, backend, nested, kernelName)
+			if err != nil {
+				return err
+			}
 
 			// Validate image exists if specified
 			if imageName != "" {
@@ -154,6 +165,8 @@ func createCmd() *cobra.Command {
 			newVM.DNSServers = dnsServers
 			newVM.Mounts = vmMounts
 			newVM.AutoStart = !noAutostart
+			newVM.Backend = backend
+			newVM.Nested = nested
 
 			// Set paths
 			newVM.SocketPath = fmt.Sprintf("%s/%s.sock", paths.Sockets, name)
@@ -180,6 +193,9 @@ func createCmd() *cobra.Command {
 			}
 			if newVM.Kernel != "" {
 				fmt.Printf("  Kernel: %s\n", newVM.Kernel)
+			}
+			if newVM.Backend != "" {
+				fmt.Printf("  Backend: %s\n", backendLabel(newVM))
 			}
 			fmt.Printf("  TAP device: %s, MAC: %s\n", newVM.TapDevice, newVM.MacAddress)
 			if !newVM.AutoStart {
@@ -212,6 +228,11 @@ func createCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&dnsServers, "dns", nil, "Custom DNS servers (can be specified multiple times)")
 	cmd.Flags().StringVar(&imageName, "image", "", "Name of rootfs image to use (from 'vmm image import')")
 	cmd.Flags().StringVar(&kernelName, "kernel", "", "Name of kernel to use (from 'vmm kernel import')")
+	cmd.Flags().StringVar(&backend, "backend", "", "Hypervisor to run the VM under: firecracker (default) or cloud-hypervisor")
+	cmd.Flags().BoolVar(&nested, "nested", false, "Let the VM run its own VMs (uses cloud-hypervisor and the "+lifecycle.NestedKernel+" kernel unless --kernel is given)")
+	cmd.RegisterFlagCompletionFunc("backend", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return hypervisor.Names, cobra.ShellCompDirectiveNoFileComp
+	})
 	cmd.Flags().StringArrayVar(&mounts, "mount", nil, "Mount host directory in VM (format: /host/path:tag[:ro|rw])")
 	cmd.Flags().BoolVar(&noAutostart, "no-autostart", false, "Don't start this VM at boot (change later with 'vmm set <name> autostart on')")
 	cmd.RegisterFlagCompletionFunc("kernel", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

@@ -1,11 +1,11 @@
 // Package snapshot implements point-in-time snapshots of running microVMs.
 //
 // A snapshot captures the full VM state at an instant: the guest memory and
-// device/vcpu state (via Firecracker's snapshot API) plus a copy of the VM's
-// rootfs and any mount images. Because a Firecracker snapshot does not include
-// the block devices, the disks must be copied at the same instant the memory
-// snapshot is taken (while the VM is paused) or the restored guest would see an
-// inconsistent filesystem.
+// device/vcpu state (via the backend's snapshot API, e.g. Firecracker's) plus a
+// copy of the VM's rootfs and any mount images. Because a memory snapshot does
+// not include the block devices, the disks must be copied at the same instant
+// the memory snapshot is taken (while the VM is paused) or the restored guest
+// would see an inconsistent filesystem.
 //
 // Restore is in-place: it rolls a VM back to one of its own snapshots, reusing
 // the VM's original IP/MAC/TAP identity (which is frozen into the guest memory).
@@ -21,7 +21,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/raesene/baremetalvmm/internal/firecracker"
+	"github.com/raesene/baremetalvmm/internal/hypervisor"
 	"github.com/raesene/baremetalvmm/internal/network"
 	"github.com/raesene/baremetalvmm/internal/vm"
 )
@@ -44,24 +44,29 @@ type MountSnapshot struct {
 // Metadata describes a stored VM snapshot. It records everything needed to
 // restore the exact environment the frozen guest expects.
 type Metadata struct {
-	Name       string          `json:"name"`
-	VMName     string          `json:"vm_name"`
-	VMID       string          `json:"vm_id"`
-	CreatedAt  time.Time       `json:"created_at"`
-	FCVersion  string          `json:"fc_version,omitempty"`
-	CPUs       int             `json:"cpus"`
-	MemoryMB   int             `json:"memory_mb"`
-	Kernel     string          `json:"kernel,omitempty"`
-	KernelPath string          `json:"kernel_path"`
-	IPAddress  string          `json:"ip_address"`
-	MacAddress string          `json:"mac_address"`
-	TapDevice  string          `json:"tap_device"`
-	RootfsPath string          `json:"rootfs_path"` // original host path to restore the rootfs to
-	MemFile    string          `json:"mem_file"`
-	StateFile  string          `json:"state_file"`
-	RootfsFile string          `json:"rootfs_file"`
-	Mounts     []MountSnapshot `json:"mounts,omitempty"`
-	SizeBytes  int64           `json:"size_bytes"`
+	Name      string    `json:"name"`
+	VMName    string    `json:"vm_name"`
+	VMID      string    `json:"vm_id"`
+	CreatedAt time.Time `json:"created_at"`
+	// Backend is the hypervisor that took the snapshot; empty means
+	// Firecracker. A snapshot only restores under the same backend.
+	Backend string `json:"backend,omitempty"`
+	// BackendVersion is that hypervisor's version. The JSON key predates
+	// other backends.
+	BackendVersion string          `json:"fc_version,omitempty"`
+	CPUs           int             `json:"cpus"`
+	MemoryMB       int             `json:"memory_mb"`
+	Kernel         string          `json:"kernel,omitempty"`
+	KernelPath     string          `json:"kernel_path"`
+	IPAddress      string          `json:"ip_address"`
+	MacAddress     string          `json:"mac_address"`
+	TapDevice      string          `json:"tap_device"`
+	RootfsPath     string          `json:"rootfs_path"` // original host path to restore the rootfs to
+	MemFile        string          `json:"mem_file"`
+	StateFile      string          `json:"state_file"`
+	RootfsFile     string          `json:"rootfs_file"`
+	Mounts         []MountSnapshot `json:"mounts,omitempty"`
+	SizeBytes      int64           `json:"size_bytes"`
 }
 
 // Manager handles snapshot storage under a base directory (one subdirectory per
@@ -95,7 +100,7 @@ func (m *Manager) Exists(vmName, snapName string) bool {
 // and device state are written, its rootfs and mount images are copied, and
 // then it is resumed (unless resume is false, in which case it is left paused
 // for the caller to stop).
-func (m *Manager) Create(ctx context.Context, fc *firecracker.Client, v *vm.VM, snapName string, resume bool) (*Metadata, error) {
+func (m *Manager) Create(ctx context.Context, hv hypervisor.Snapshotter, v *vm.VM, snapName string, resume bool) (*Metadata, error) {
 	if m.Exists(v.Name, snapName) {
 		return nil, fmt.Errorf("snapshot '%s' already exists for VM '%s'", snapName, v.Name)
 	}
@@ -116,20 +121,20 @@ func (m *Manager) Create(ctx context.Context, fc *firecracker.Client, v *vm.VM, 
 	statePath := filepath.Join(dir, stateFile)
 
 	// Pause the guest so memory and disk are captured at the same instant.
-	if err := fc.PauseVM(ctx, v.SocketPath); err != nil {
+	if err := hv.PauseVM(ctx, v.SocketPath); err != nil {
 		return nil, err
 	}
 	// Ensure the guest is resumed if anything below fails while it is paused.
 	needResume := true
 	defer func() {
 		if needResume {
-			if err := fc.ResumeVM(ctx, v.SocketPath); err != nil {
+			if err := hv.ResumeVM(ctx, v.SocketPath); err != nil {
 				fmt.Printf("Warning: failed to resume VM '%s' after snapshot error: %v\n", v.Name, err)
 			}
 		}
 	}()
 
-	if err := fc.CreateSnapshotFiles(ctx, v.SocketPath, memPath, statePath); err != nil {
+	if err := hv.CreateSnapshotFiles(ctx, v.SocketPath, memPath, statePath); err != nil {
 		return nil, err
 	}
 
@@ -157,30 +162,31 @@ func (m *Manager) Create(ctx context.Context, fc *firecracker.Client, v *vm.VM, 
 
 	// Resume (or intentionally leave paused for a --stop caller).
 	if resume {
-		if err := fc.ResumeVM(ctx, v.SocketPath); err != nil {
+		if err := hv.ResumeVM(ctx, v.SocketPath); err != nil {
 			return nil, err
 		}
 	}
 	needResume = false
 
 	meta := &Metadata{
-		Name:       snapName,
-		VMName:     v.Name,
-		VMID:       v.ID,
-		CreatedAt:  time.Now(),
-		FCVersion:  fc.Version(),
-		CPUs:       v.CPUs,
-		MemoryMB:   v.MemoryMB,
-		Kernel:     v.Kernel,
-		KernelPath: v.KernelPath,
-		IPAddress:  v.IPAddress,
-		MacAddress: v.MacAddress,
-		TapDevice:  v.TapDevice,
-		RootfsPath: v.RootfsPath,
-		MemFile:    memFile,
-		StateFile:  stateFile,
-		RootfsFile: rootfsFile,
-		Mounts:     mounts,
+		Name:           snapName,
+		VMName:         v.Name,
+		VMID:           v.ID,
+		CreatedAt:      time.Now(),
+		Backend:        hv.Name(),
+		BackendVersion: hv.Version(),
+		CPUs:           v.CPUs,
+		MemoryMB:       v.MemoryMB,
+		Kernel:         v.Kernel,
+		KernelPath:     v.KernelPath,
+		IPAddress:      v.IPAddress,
+		MacAddress:     v.MacAddress,
+		TapDevice:      v.TapDevice,
+		RootfsPath:     v.RootfsPath,
+		MemFile:        memFile,
+		StateFile:      stateFile,
+		RootfsFile:     rootfsFile,
+		Mounts:         mounts,
 	}
 	meta.SizeBytes = dirSize(dir)
 
@@ -195,14 +201,17 @@ func (m *Manager) Create(ctx context.Context, fc *firecracker.Client, v *vm.VM, 
 // Restore rolls a VM back to a snapshot in place. The VM must already be
 // stopped. The snapshot's rootfs and mount images are copied back to their
 // original host paths; then, if start is true, the network is re-established
-// (same TAP/IP as when the snapshot was taken) and Firecracker is started from
+// (same TAP/IP as when the snapshot was taken) and the backend is started from
 // the snapshot with the guest resumed.
 //
 // On a successful start the VM's State, PID and StartedAt fields are updated;
 // the caller is responsible for persisting the VM.
-func (m *Manager) Restore(ctx context.Context, fc *firecracker.Client, netMgr *network.Manager, v *vm.VM, snapName, logPath string, start bool) (*Metadata, error) {
+func (m *Manager) Restore(ctx context.Context, hv hypervisor.Snapshotter, netMgr *network.Manager, v *vm.VM, snapName, logPath string, start bool) (*Metadata, error) {
 	meta, err := m.Get(v.Name, snapName)
 	if err != nil {
+		return nil, err
+	}
+	if err := meta.Compatible(hv); err != nil {
 		return nil, err
 	}
 
@@ -237,7 +246,7 @@ func (m *Manager) Restore(ctx context.Context, fc *firecracker.Client, netMgr *n
 	memPath := filepath.Join(dir, meta.MemFile)
 	statePath := filepath.Join(dir, meta.StateFile)
 
-	machine, err := fc.RestoreVM(ctx, v.SocketPath, logPath, memPath, statePath)
+	pid, err := hv.RestoreVM(ctx, v.SocketPath, logPath, memPath, statePath)
 	if err != nil {
 		if v.TapDevice != "" && netMgr.TapExists(v.TapDevice) {
 			if derr := netMgr.DeleteTap(v.TapDevice); derr != nil {
@@ -248,10 +257,28 @@ func (m *Manager) Restore(ctx context.Context, fc *firecracker.Client, netMgr *n
 	}
 
 	v.State = vm.StateRunning
-	v.PID = fc.GetVMPID(machine)
+	v.PID = pid
 	v.StartedAt = time.Now()
 
 	return meta, nil
+}
+
+// BackendName returns the hypervisor that took the snapshot.
+func (meta *Metadata) BackendName() string {
+	if meta.Backend == "" {
+		return hypervisor.Firecracker
+	}
+	return meta.Backend
+}
+
+// Compatible reports whether hv can restore the snapshot. Memory and device
+// state are in the backend's own format, so it must be the backend that took
+// it. Callers check this before stopping a VM to restore it.
+func (meta *Metadata) Compatible(hv hypervisor.Backend) error {
+	if meta.BackendName() != hv.Name() {
+		return fmt.Errorf("snapshot '%s' was taken under %s but VM '%s' runs under %s", meta.Name, meta.BackendName(), meta.VMName, hv.Name())
+	}
+	return nil
 }
 
 // Get loads the metadata for a single snapshot.
